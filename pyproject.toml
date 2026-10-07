@@ -1,0 +1,100 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# ---------------------------------------------------------------------------
+# Project metadata
+# ---------------------------------------------------------------------------
+
+[project]
+name = "tekjuice-connector"
+version = "0.1.0"
+description = "Tek Juice Data Engine Connector — standalone Python package for customer backend authentication and connection."
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Tek Juice", email = "support@tekjuice.io" },
+]
+keywords = [
+    "tekjuice",
+    "data-engine",
+    "connector",
+    "authentication",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Internet :: WWW/HTTP",
+]
+requires-python = ">=3.11"
+
+# Runtime dependencies — keep minimal.
+dependencies = [
+    "requests>=2.28.0,<3",
+]
+
+# ---------------------------------------------------------------------------
+# Optional dependencies
+# ---------------------------------------------------------------------------
+
+[project.optional-dependencies]
+dotenv = [
+    "python-dotenv>=1.0.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "python-dotenv>=1.0.0",
+]
+
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+
+[project.scripts]
+tekjuice = "tekjuice_connector.cli.main:cli_entry"
+
+# ---------------------------------------------------------------------------
+# URLs
+# ---------------------------------------------------------------------------
+
+[project.urls]
+Homepage = "https://github.com/tekjuice/tekjuice-connector"
+Documentation = "https://github.com/tekjuice/tekjuice-connector/tree/main/docs"
+Repository = "https://github.com/tekjuice/tekjuice-connector"
+"Bug Tracker" = "https://github.com/tekjuice/tekjuice-connector/issues"
+
+# ---------------------------------------------------------------------------
+# Package discovery — src layout
+# ---------------------------------------------------------------------------
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+# ---------------------------------------------------------------------------
+# pytest configuration
+# ---------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+# ---------------------------------------------------------------------------
+# Coverage (optional, used when pytest-cov is installed)
+# ---------------------------------------------------------------------------
+
+[tool.coverage.run]
+source = ["tekjuice_connector"]
+omit = ["tests/*", "examples/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
