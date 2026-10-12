@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-12
+
+### Added
+
+- `PublicationRegistration(public_content_url=...)`: client-rendered sites can declare an
+  anonymous HTTPS URL template (with `{slug}`) serving the published content their pages
+  render, so the Data Engine can prove publication on sites whose HTML is an empty shell.
+
 ## [0.2.0] — 2026-10-12
 
 ### Added

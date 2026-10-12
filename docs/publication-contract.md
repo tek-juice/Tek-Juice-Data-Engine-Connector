@@ -56,6 +56,16 @@ the connection (below) and activates it only if verification succeeds.
 Re-sending an identical registration is a no-op; a changed endpoint, secret
 or capability set deactivates the connection until it is re-verified.
 
+### Client-rendered sites
+
+If your published pages are rendered in the browser (the HTML is an empty
+application shell), add `"public_content_url"` to the registration: an
+anonymous HTTPS URL template containing `{slug}` on your website's domain that
+returns the published content (for example the JSON your page renders, such
+as `https://www.example.com/api/content/{slug}`). After each publication the
+Data Engine fetches the public page, and when the title is not in its HTML it
+fetches this URL and requires the title there before reporting `verified`.
+
 ## Capabilities
 
 | Capability | Meaning | Advertised when |

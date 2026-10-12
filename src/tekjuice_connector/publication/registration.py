@@ -36,6 +36,12 @@ class PublicationRegistration:
 
     The receiver secret is sent to the Data Engine only inside the
     authenticated handshake; it is redacted from ``repr`` and logs.
+
+    ``public_content_url`` (optional) is for client-rendered sites whose
+    pages are an empty HTML shell: an anonymous HTTPS URL template containing
+    ``{slug}`` that serves the published content the page renders, e.g.
+    ``https://www.example.com/api/content/{slug}``. The Data Engine fetches it
+    to prove published content is publicly served.
     """
 
     endpoint_url: str
@@ -45,6 +51,7 @@ class PublicationRegistration:
         default_factory=lambda: tuple(sorted(SUPPORTED_CONTRACT_VERSIONS))
     )
     framework: Optional[str] = None
+    public_content_url: Optional[str] = None
 
     def __post_init__(self) -> None:
         parts = urlsplit(self.endpoint_url or "")
@@ -56,6 +63,12 @@ class PublicationRegistration:
             raise ConfigurationError(
                 "Publication endpoint URL must not contain credentials"
             )
+        if self.public_content_url is not None:
+            content = urlsplit(self.public_content_url)
+            if content.scheme != "https" or not content.hostname:
+                raise ConfigurationError("public_content_url must be an absolute https URL")
+            if "{slug}" not in self.public_content_url:
+                raise ConfigurationError("public_content_url must contain the {slug} placeholder")
         if len(self.receiver_secret.reveal()) < MIN_RECEIVER_SECRET_LENGTH:
             raise ConfigurationError(
                 f"Receiver secret must be at least {MIN_RECEIVER_SECRET_LENGTH} characters"
@@ -68,6 +81,7 @@ class PublicationRegistration:
         *,
         endpoint_url: Optional[str] = None,
         framework: Optional[str] = None,
+        public_content_url: Optional[str] = None,
     ) -> "PublicationRegistration":
         """Describe a mounted receiver. ``endpoint_url`` falls back to
         ``TEKJUICE_PUBLICATION_ENDPOINT_URL``."""
@@ -86,10 +100,11 @@ class PublicationRegistration:
             capabilities=tuple(sorted(receiver.capabilities)),
             contract_versions=tuple(sorted(receiver.contract_versions)),
             framework=framework,
+            public_content_url=public_content_url,
         )
 
     def to_handshake_dict(self) -> Dict[str, Any]:
-        return {
+        body = {
             "endpoint_url": self.endpoint_url,
             "auth_scheme": "bearer",
             "receiver_secret": self.receiver_secret.reveal(),
@@ -97,6 +112,9 @@ class PublicationRegistration:
             "capabilities": list(self.capabilities),
             "framework": self.framework,
         }
+        if self.public_content_url:
+            body["public_content_url"] = self.public_content_url
+        return body
 
     def __repr__(self) -> str:
         return (

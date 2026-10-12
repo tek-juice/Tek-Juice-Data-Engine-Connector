@@ -194,3 +194,27 @@ def test_receiver_secret_is_redacted_from_logs(caplog):
     from tekjuice_connector.security.redaction import redact_env_value
 
     assert redact_env_value("TEKJUICE_RECEIVER_SECRET", RECEIVER_SECRET) != RECEIVER_SECRET
+
+
+def test_public_content_url_is_sent_when_declared():
+    registration = PublicationRegistration.from_receiver(
+        _receiver(), endpoint_url=ENDPOINT,
+        public_content_url="https://www.customer.example/api/content/{slug}",
+    )
+    assert registration.to_handshake_dict()["public_content_url"] == (
+        "https://www.customer.example/api/content/{slug}")
+
+
+def test_public_content_url_is_omitted_when_not_declared():
+    registration = PublicationRegistration.from_receiver(_receiver(), endpoint_url=ENDPOINT)
+    assert "public_content_url" not in registration.to_handshake_dict()
+
+
+@pytest.mark.parametrize("url", [
+    "http://www.customer.example/api/content/{slug}",
+    "https://www.customer.example/api/content/fixed",
+    "/api/content/{slug}",
+])
+def test_invalid_public_content_url_is_rejected(url):
+    with pytest.raises(ConfigurationError):
+        PublicationRegistration.from_receiver(_receiver(), endpoint_url=ENDPOINT, public_content_url=url)
