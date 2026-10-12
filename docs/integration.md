@@ -125,8 +125,8 @@ The Connector does not and must not:
 
 - Access the Data Engine database directly.
 - Import Data Engine internal modules.
-- Implement M2M execution or authentication.
-- Implement content generation, SEO, or publication.
+- Implement content generation or SEO.
+- Store content itself (your `ContentStore` does; see publication.md).
 - Manage Django ORM models.
 - Manage FastAPI dependency injection trees.
 - Run Celery tasks.

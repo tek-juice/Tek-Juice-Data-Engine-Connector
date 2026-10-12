@@ -8,8 +8,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tekjuice-connector"
-version = "0.1.0"
-description = "Tek Juice Data Engine Connector — standalone Python package for customer backend authentication and connection."
+version = "0.2.0"
+description = "Tek Juice Data Engine Connector — customer backend authentication, connection and S2S content publication."
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [
@@ -20,6 +20,7 @@ keywords = [
     "data-engine",
     "connector",
     "authentication",
+    "publication",
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -64,10 +65,10 @@ tekjuice = "tekjuice_connector.cli.main:cli_entry"
 # ---------------------------------------------------------------------------
 
 [project.urls]
-Homepage = "https://github.com/tekjuice/tekjuice-connector"
-Documentation = "https://github.com/tekjuice/tekjuice-connector/tree/main/docs"
-Repository = "https://github.com/tekjuice/tekjuice-connector"
-"Bug Tracker" = "https://github.com/tekjuice/tekjuice-connector/issues"
+Homepage = "https://github.com/tek-juice/Tek-Juice-Data-Engine-Connector"
+Documentation = "https://github.com/tek-juice/Tek-Juice-Data-Engine-Connector/tree/main/docs"
+Repository = "https://github.com/tek-juice/Tek-Juice-Data-Engine-Connector"
+"Bug Tracker" = "https://github.com/tek-juice/Tek-Juice-Data-Engine-Connector/issues"
 
 # ---------------------------------------------------------------------------
 # Package discovery — src layout

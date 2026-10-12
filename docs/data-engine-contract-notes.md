@@ -24,6 +24,24 @@ implementation assumes this is correctly handled by the Data Engine.
 
 ---
 
+## Publication registration (0.2.0)
+
+The handshake body may include a `publication` object (see
+`publication-contract.md`). The Data Engine responds with
+`publication_status`, `publication_ready` and `next_action` in addition to
+the 0.1.0 fields; the Connector treats them as optional so it keeps working
+against Data Engines that predate publication readiness. `ready` is only
+`true` once the Data Engine has verified the publication endpoint.
+
+Non-auth 4xx handshake responses (for example `409` when website ownership is
+not yet verified, `422` for an invalid publication endpoint) are surfaced as
+`ApiError` with the Data Engine's message and are not retried.
+
+The Data Engine calls the customer's publication endpoint; the Connector
+does not call any other Data Engine endpoint.
+
+---
+
 ## No additional endpoints used
 
 The Connector uses only one Data Engine endpoint:

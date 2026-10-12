@@ -21,8 +21,10 @@ What the Connector does
 What the Connector does NOT do
 -------------------------------
 - It does NOT connect to the Data Engine database.
-- It does NOT implement M2M authentication or execution.
-- It does NOT implement content generation, SEO, or publication.
+- It does NOT implement content generation or SEO.
+- It does NOT store content itself: publication is received through
+  ``tekjuice_connector.publication`` and persisted by a customer-provided
+  ``ContentStore``.
 - It does NOT require Django, FastAPI, Flask, or any other framework.
 
 Quick start::
@@ -70,6 +72,7 @@ from tekjuice_connector.exceptions.connection import (
 )
 from tekjuice_connector.exceptions.validation import ResponseValidationError, ValidationError
 from tekjuice_connector.models.connection import ConnectionResult, ConnectionState
+from tekjuice_connector.publication.registration import PublicationRegistration
 from tekjuice_connector.retry.policy import RetryPolicy
 from tekjuice_connector.version import __version__
 
@@ -104,6 +107,11 @@ class TekJuiceConnector:
     allow_http:
         Allow plain HTTP URLs in development.  Default: ``False``.
         In production, HTTPS is always required.
+    publication:
+        Optional :class:`~tekjuice_connector.publication.PublicationRegistration`
+        describing this backend's publication receiver.  When given, every
+        ``connect()`` registers it with the Data Engine, which then verifies
+        it can publish before reporting ``ready``.
 
     Examples
     --------
@@ -132,6 +140,7 @@ class TekJuiceConnector:
         max_retries: int = 3,
         retry_policy: Optional[RetryPolicy] = None,
         allow_http: bool = False,
+        publication: Optional["PublicationRegistration"] = None,
     ) -> None:
         self._settings: ConnectorSettings = load_settings(
             website_id=website_id,
@@ -154,6 +163,7 @@ class TekJuiceConnector:
         self._manager: ConnectionManager = ConnectionManager.from_settings(
             self._settings,
             retry_policy=effective_policy,
+            publication=publication,
         )
 
     # ------------------------------------------------------------------
@@ -256,6 +266,7 @@ __all__ = [
     "ConnectionResult",
     "ConnectionState",
     "DiagnosticReport",
+    "PublicationRegistration",
     # Exception hierarchy
     "TekJuiceConnectorError",
     "ConfigurationError",

@@ -2,10 +2,10 @@
 
 ## Two independent authentication systems
 
-> **Critical distinction**: the Tek Juice platform has two completely
-> separate authentication mechanisms. This document covers Connector E2E
-> authentication only. M2M publication authentication is a separate
-> system managed entirely by the Data Engine and is not part of this package.
+> **Critical distinction**: two credentials are involved and they are never
+> interchangeable. The **connector key** authenticates this backend to the
+> Data Engine (the handshake). The **receiver secret** authenticates the
+> Data Engine to this backend's publication receiver (S2S publication).
 
 ---
 
@@ -127,18 +127,24 @@ except RetryExhaustedError as exc:
 
 ---
 
-## M2M publication authentication — NOT part of this package
+## S2S publication authentication (receiver secret)
 
-The Tek Juice Data Engine has a separate M2M mechanism for executing
-publication jobs. That mechanism:
+Publication is initiated by the Data Engine and received by
+`tekjuice_connector.publication.PublicationReceiver`:
 
-- Is initiated by the Data Engine, not the customer backend.
-- Uses its own credentials, not the connector key.
-- Is not implemented in this package.
-- Must not be confused with Connector E2E authentication.
+- You generate the receiver secret (`secrets.token_urlsafe(48)`, at least
+  32 characters) and keep it server-side (`TEKJUICE_RECEIVER_SECRET`).
+- The connector sends it once per handshake, inside the request authenticated
+  by the connector key; the Data Engine stores it encrypted and never
+  returns it.
+- The Data Engine presents it as `Authorization: Bearer <secret>` on every
+  verification and publication request; the receiver compares it in
+  constant time.
 
-**Do not use `TEKJUICE_CONNECTOR_KEY` for M2M requests.**
-**Do not use M2M credentials for the Connector handshake.**
+**Do not use `TEKJUICE_CONNECTOR_KEY` as the receiver secret, or the
+receiver secret as the connector key.**
 
-If you have questions about M2M authentication, refer to the Tek Juice
-Data Engine documentation.
+The Data Engine's earlier M2M publication transport is retired: S2S through
+this package is the only supported way to receive publications. See
+[publication.md](publication.md) and
+[publication-contract.md](publication-contract.md).

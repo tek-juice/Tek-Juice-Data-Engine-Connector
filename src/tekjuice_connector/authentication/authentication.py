@@ -44,9 +44,12 @@ class Authenticator:
         self,
         client: DataEngineClient,
         credentials: ConnectorCredentials,
+        publication: object = None,
     ) -> None:
         self._client = client
         self._credentials = credentials
+        # Optional PublicationRegistration sent with every handshake.
+        self._publication = publication
 
     def authenticate(self) -> AuthSession:
         """Execute the handshake and return a validated :class:`AuthSession`.
@@ -75,6 +78,11 @@ class Authenticator:
         response = perform_handshake(
             client=self._client,
             website_id=self._credentials.website_id,
+            publication=(
+                self._publication.to_handshake_dict()  # type: ignore[union-attr]
+                if self._publication is not None
+                else None
+            ),
         )
         return AuthSession.create(response)
 
@@ -83,6 +91,7 @@ class Authenticator:
         cls,
         settings: object,
         client: DataEngineClient | None = None,
+        publication: object = None,
     ) -> "Authenticator":
         """Convenience factory from a :class:`ConnectorSettings` object.
 
@@ -98,4 +107,5 @@ class Authenticator:
         return cls(
             client=client,
             credentials=settings.credentials,  # type: ignore[union-attr]
+            publication=publication,
         )

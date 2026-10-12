@@ -26,6 +26,7 @@ from tekjuice_connector.exceptions.authentication import (
     InvalidCredentialsError,
     WebsiteIdMismatchError,
 )
+from tekjuice_connector.exceptions.api import ApiError
 from tekjuice_connector.exceptions.base import TekJuiceConnectorError
 from tekjuice_connector.exceptions.connection import RetryExhaustedError
 from tekjuice_connector.exceptions.validation import ResponseValidationError
@@ -155,6 +156,23 @@ class ConnectionManager:
 
             try:
                 return self._authenticator.authenticate()
+            except ApiError as exc:
+                if exc.status_code is not None and 400 <= exc.status_code < 500:
+                    # A 4xx handshake rejection (e.g. ownership not verified,
+                    # invalid publication endpoint) will not fix itself.
+                    _log.error(
+                        "Permanent handshake rejection on attempt %d: %s",
+                        attempt,
+                        exc,
+                    )
+                    raise
+                last_exc = exc
+                _log.warning(
+                    "Transient connection failure on attempt %d/%d: %s",
+                    attempt,
+                    policy.max_attempts,
+                    exc,
+                )
             except _PERMANENT_ERRORS as exc:
                 # Permanent — re-raise immediately, do not retry.
                 _log.error(
@@ -186,6 +204,7 @@ class ConnectionManager:
         cls,
         settings: object,
         retry_policy: Optional[object] = None,
+        publication: Optional[object] = None,
     ) -> "ConnectionManager":
         """Build a :class:`ConnectionManager` from a :class:`ConnectorSettings`.
 
@@ -196,5 +215,5 @@ class ConnectionManager:
         retry_policy:
             Optional :class:`~tekjuice_connector.retry.policy.RetryPolicy`.
         """
-        authenticator = Authenticator.from_settings(settings)
+        authenticator = Authenticator.from_settings(settings, publication=publication)
         return cls(authenticator=authenticator, retry_policy=retry_policy)

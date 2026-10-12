@@ -24,7 +24,10 @@ which is handled gracefully here.
 
 from __future__ import annotations
 
+from typing import Any, Dict, Optional
+
 from tekjuice_connector.client.client import DataEngineClient
+from tekjuice_connector.exceptions.api import ApiError
 from tekjuice_connector.exceptions.authentication import WebsiteIdMismatchError
 from tekjuice_connector.exceptions.validation import ResponseValidationError
 from tekjuice_connector.models.authentication import HandshakeRequest, HandshakeResponse
@@ -45,6 +48,7 @@ _REQUIRED_RESPONSE_FIELDS = (
 def perform_handshake(
     client: DataEngineClient,
     website_id: str,
+    publication: Optional[Dict[str, Any]] = None,
 ) -> HandshakeResponse:
     """Execute the E2E handshake and return a validated :class:`HandshakeResponse`.
 
@@ -77,8 +81,19 @@ def perform_handshake(
     ConnectionTimeoutError / ConnectionError
         On network-level failures.
     """
-    request = HandshakeRequest(website_id=website_id)
+    request = HandshakeRequest(website_id=website_id, publication=publication)
     response = client.post(HANDSHAKE_ENDPOINT, payload=request.to_dict())
+
+    if response.status_code >= 400:
+        # 401/403/5xx are raised by the transport; remaining 4xx responses
+        # (e.g. ownership not yet verified, invalid publication endpoint)
+        # carry an actionable Data Engine message.
+        raise ApiError(
+            f"Data Engine rejected the handshake (HTTP {response.status_code}): "
+            f"{_error_message(response.body)}",
+            status_code=response.status_code,
+            endpoint=HANDSHAKE_ENDPOINT,
+        )
 
     if not isinstance(response.body, dict):
         raise ResponseValidationError(
@@ -125,6 +140,18 @@ def _validate_response_fields(body: dict) -> None:
                 f"got {type(value).__name__}.",
                 field=bool_field,
             )
+
+
+def _error_message(body: object) -> str:
+    """Extract a safe message from a Data Engine error body."""
+    if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error["message"])
+        for key in ("message", "detail"):
+            if body.get(key):
+                return str(body[key])
+    return "no error message provided"
 
 
 def _parse_response(body: dict) -> HandshakeResponse:

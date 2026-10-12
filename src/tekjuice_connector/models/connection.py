@@ -41,6 +41,9 @@ class ConnectionResult:
     onboarding_status: Optional[str] = None
     connector_authenticated: Optional[bool] = None
     backend_connected: Optional[bool] = None
+    publication_status: Optional[str] = None
+    publication_ready: Optional[bool] = None
+    next_action: Optional[str] = None
 
     # Human-readable message (never contains secrets)
     message: str = ""
@@ -58,6 +61,9 @@ class ConnectionResult:
             onboarding_status=response.onboarding_status,
             connector_authenticated=response.connector_authenticated,
             backend_connected=response.backend_connected,
+            publication_status=response.publication_status,
+            publication_ready=response.publication_ready,
+            next_action=response.next_action,
             message=(
                 "Connector authenticated and backend connected. READY."
                 if response.ready

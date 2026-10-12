@@ -9,6 +9,31 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-10-12
+
+### Added
+
+- S2S publication receiver (`tekjuice_connector.publication`): versioned contract v1.0
+  (`create`, `update`, non-persisting `verify`), bearer authentication with constant-time
+  comparison, strict payload validation, content-hash check, receiver-side idempotency
+  (`idempotency_key` replay), duplicate-slug protection, structured errors whose HTTP
+  status tells the Data Engine whether to retry.
+- `ContentStore` protocol so customers persist content in their own model; capabilities
+  (`publish.create`, `publish.update`, `publish.verify`) are derived from what the store
+  implements. Reference `InMemoryContentStore` and `SQLiteContentStore`.
+- Framework adapters: dependency-free WSGI and ASGI, plus FastAPI, Flask and Django
+  wrappers that import their framework lazily.
+- `PublicationRegistration` and `TekJuiceConnector(publication=...)`: the handshake now
+  registers the receiver endpoint, secret, contract versions and capabilities.
+- `ConnectionResult.publication_status`, `publication_ready`, `next_action`.
+- Docs: `docs/publication.md`, `docs/publication-contract.md`.
+
+### Changed
+
+- 4xx handshake rejections other than 401/403 raise `ApiError` with the Data Engine's
+  message and are no longer retried.
+- Project URLs point to `tek-juice/Tek-Juice-Data-Engine-Connector`.
+
 ## [0.1.0] — 2026-10-07
 
 ### Added

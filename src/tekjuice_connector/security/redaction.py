@@ -40,6 +40,8 @@ _SENSITIVE_ENV_KEYS: frozenset[str] = frozenset(
     {
         "tekjuice_connector_key",
         "connector_key",
+        "tekjuice_receiver_secret",
+        "receiver_secret",
         "api_key",
         "secret",
         "password",
