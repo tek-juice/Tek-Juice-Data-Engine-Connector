@@ -78,6 +78,8 @@ CAPABILITY_AI_ROBOTS = "ai.robots"
 # The site serves its IndexNow key at /<key>.txt, so the Data Engine can
 # notify search engines (Bing, Yandex, ...) the moment an article is live.
 CAPABILITY_AI_INDEXNOW = "ai.indexnow"
+# The site renders the business's verified facts (content.discovery.entity).
+CAPABILITY_AI_ENTITY = "ai.entity"
 
 SLUG_MAX_LENGTH = 120
 _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -101,8 +103,12 @@ _CONTENT_FIELDS = frozenset(
 # Engine. Optional; sent only to receivers advertising publish.discovery.
 _DISCOVERY_FIELDS = frozenset(
     {"summary", "key_takeaways", "entities", "direct_answer", "faq", "citations",
-     "json_ld", "language"}
+     "json_ld", "language", "entity"}
 )
+# The business's verified facts (site-wide): rendered as Organization and
+# product JSON-LD, the llms.txt "About" section and entity.json.
+_ENTITY_TEXT_FIELDS = frozenset({"name", "website", "description", "category", "product_type"})
+_ENTITY_LIST_FIELDS = frozenset({"products", "features", "use_cases", "audiences", "locations", "pricing"})
 DISCOVERY_MAX_BYTES = 200_000
 _METADATA_FIELDS = frozenset(
     {"content_strategy_id", "opportunity_id", "content_hash"}
@@ -254,6 +260,20 @@ def _parse_discovery(value: Any) -> Optional[Dict[str, Any]]:
             {"url": i["url"], "title": str(i.get("title") or "")}
             for i in citations if i["url"].startswith(("https://", "http://"))
         ]
+    if "entity" in data:
+        entity = _require_object(data["entity"], "content.discovery.entity")
+        _reject_unknown(entity, _ENTITY_TEXT_FIELDS | _ENTITY_LIST_FIELDS, "content.discovery.entity")
+        parsed: Dict[str, Any] = {}
+        for key in _ENTITY_TEXT_FIELDS & entity.keys():
+            if not isinstance(entity[key], str):
+                raise ContractViolationError(f"'content.discovery.entity.{key}' must be a string")
+            parsed[key] = entity[key]
+        for key in _ENTITY_LIST_FIELDS & entity.keys():
+            parsed[key] = _str_list(entity[key], f"entity.{key}")
+        website = parsed.get("website", "")
+        if website and not website.startswith(("https://", "http://")):
+            raise ContractViolationError("'content.discovery.entity.website' must be an http(s) URL")
+        out["entity"] = parsed
     if "json_ld" in data:
         json_ld = data["json_ld"]
         if not isinstance(json_ld, list) or not all(isinstance(i, dict) for i in json_ld):

@@ -35,6 +35,11 @@ entities, a direct answer, FAQ, citations and JSON-LD. The connector uses it:
   ClaudeBot, PerplexityBot, Google-Extended, ...) on public content and keeps
   `private_paths` closed.
 
+* **Business facts** – the Data Engine sends the business's verified facts
+  (only facts confirmed by the customer or stated on the customer's own
+  pages) as `content.discovery.entity`. Pages carry Organization and
+  Product JSON-LD, `llms.txt` an "About" section, and `entity.json` the
+  facts as data, so AI systems describe the business from its own site.
 * **IndexNow** – the receiver derives the site's IndexNow key from its
   secret and `create_seo_router` serves it at `indexnow/{key}`. Route
   `/<key>.txt` there (see the nginx example) and the Data Engine notifies
@@ -79,6 +84,7 @@ location = /robots.txt     { proxy_pass http://backend/api/tekjuice/seo/robots.t
 location = /llms.txt       { proxy_pass http://backend/api/tekjuice/seo/llms.txt; }
 location = /llms-full.txt  { proxy_pass http://backend/api/tekjuice/seo/llms-full.txt; }
 location = /feed.json      { proxy_pass http://backend/api/tekjuice/seo/feed.json; }
+location = /entity.json    { proxy_pass http://backend/api/tekjuice/seo/entity.json; }
 location ~ ^/([A-Za-z0-9_-]+)\.md$ { proxy_pass http://backend/api/tekjuice/seo/markdown/$1; }
 location ~ "^/([a-f0-9]{32})\.txt$" { proxy_pass http://backend/api/tekjuice/seo/indexnow/$1; }
 

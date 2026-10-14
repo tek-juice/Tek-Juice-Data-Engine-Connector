@@ -32,6 +32,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   `{prefix}/indexnow/{key}`; route `/<key>.txt` there so the Data Engine can
   notify Bing, Yandex and other IndexNow engines when an article goes live.
 - `SQLiteContentStore` stores `discovery` (column added automatically).
+- Verified business facts: `content.discovery.entity` (name, website,
+  description, category, product type, products, features, use cases,
+  audiences, locations, pricing as stated on the site). The receiver
+  advertises `ai.entity`; pages carry Organization and Product JSON-LD (the
+  organization URL is always this site), `llms.txt` gains an "About"
+  section, and `create_seo_router` serves `entity.json`.
 
 ## [0.4.0] — 2026-10-14
 

@@ -53,6 +53,7 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
     * ``{prefix}/markdown/{slug}``: the article as Markdown (serve it at
       ``/{slug}.md``)
     * ``{prefix}/llms.txt``, ``{prefix}/llms-full.txt``, ``{prefix}/feed.json``
+    * ``{prefix}/entity.json``: the business's verified facts
     * ``{prefix}/indexnow/{key}``: the IndexNow key file (serve it at
       ``/{key}.txt``)
 
@@ -106,6 +107,15 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
                         headers={"Cache-Control": "public, max-age=86400"})
 
     routes.append(("indexnow/{key}", indexnow, "indexnow"))
+
+    async def entity() -> Response:
+        body = await run_in_threadpool(seo.entity_json)
+        if body is None:
+            return Response(status_code=404)
+        return Response(content=body, media_type="application/json",
+                        headers={"Cache-Control": "public, max-age=900"})
+
+    routes.append(("entity.json", entity, "entity"))
     for path, handler, name in routes:
         router.add_api_route(f"{prefix}/{path}", handler, methods=["GET"],
                              include_in_schema=False, name=f"tekjuice_seo_{name}")

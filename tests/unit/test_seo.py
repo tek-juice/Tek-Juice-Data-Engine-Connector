@@ -221,3 +221,57 @@ def test_indexnow_key_is_served_only_for_the_receiver_key():
     response = client.get(f"/seo/indexnow/{key}")
     assert response.status_code == 200 and response.text == key
     assert client.get(f"/seo/indexnow/{'0' * 32}").status_code == 404
+
+
+ENTITY = {"name": "Acme Budget", "website": "https://elsewhere.example/", "description": "Acme Budget tracks spending.",
+          "product_type": "Expense Tracker", "products": ["Acme Budget"], "use_cases": ["Tracking spending"],
+          "audiences": ["Households"], "pricing": ["Free plan available"]}
+
+
+def _entity_store():
+    from dataclasses import replace
+    store = InMemoryContentStore("https://site.example")
+    store.create(replace(ARTICLE, discovery={**DISCOVERY, "entity": ENTITY}), execution_id="e1", idempotency_key="k1")
+    return store
+
+
+def test_entity_is_validated():
+    from tekjuice_connector.publication.contract import ContractViolationError, _parse_discovery
+    assert _parse_discovery({"entity": ENTITY})["entity"]["products"] == ["Acme Budget"]
+    with pytest.raises(ContractViolationError):
+        _parse_discovery({"entity": {"name": "x", "ceo": "y"}})
+    with pytest.raises(ContractViolationError):
+        _parse_discovery({"entity": {"name": "x", "website": "javascript:alert(1)"}})
+
+
+def test_entity_renders_site_wide_on_this_site():
+    seo = _seo(_entity_store())
+    entity = seo.entity()
+    assert entity["website"] == "https://site.example/"          # never another domain
+    data = {d["@type"]: d for d in _json_ld(seo.page("tracking-every-expense"))}
+    assert data["Organization"]["url"] == "https://site.example/"
+    assert data["Organization"]["name"] == "Acme Budget"
+    assert data["Article"]["publisher"] == {"@id": "https://site.example/#organization"}
+    assert data["Product"]["brand"] == {"@id": "https://site.example/#organization"}
+    assert data["Product"]["category"] == "Expense Tracker"
+    llms = seo.llms_txt()
+    assert llms.startswith("# Acme Budget\n\n> Acme Budget tracks spending.")
+    assert "- Pricing (as stated on this website): Free plan available" in llms
+    import json
+    doc = json.loads(seo.entity_json())
+    assert doc["source"] == "https://site.example/" and doc["facts"]["products"] == ["Acme Budget"]
+    assert _seo(_store()).entity_json() is None
+
+
+def test_receiver_advertises_entity_and_router_serves_it():
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from tekjuice_connector.adapters.fastapi import create_seo_router
+
+    store = _entity_store()
+    seo = _seo(store)
+    assert "ai.entity" in PublicationReceiver(store=store, website_id="w", receiver_secret="s" * 40, seo=seo).capabilities
+    app = fastapi.FastAPI()
+    app.include_router(create_seo_router(seo, prefix="/seo"))
+    response = TestClient(app).get("/seo/entity.json")
+    assert response.status_code == 200 and response.json()["facts"]["name"] == "Acme Budget"

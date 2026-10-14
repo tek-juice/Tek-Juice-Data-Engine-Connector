@@ -121,6 +121,38 @@ def _description(content: PublicationContent) -> str:
     return text[:300]
 
 
+def entity_json_ld(entity: dict, *, site_url: str) -> List[dict]:
+    """Organization and product nodes from the business's verified facts.
+    The organization's URL is always *site_url* (the site serving them)."""
+    if not entity.get("name"):
+        return []
+    org_id = site_url.rstrip("/") + "/#organization"
+    org = {"@context": "https://schema.org", "@type": "Organization", "@id": org_id,
+           "name": entity["name"], "url": site_url}
+    if entity.get("description"):
+        org["description"] = entity["description"]
+    if entity.get("locations"):
+        org["areaServed"] = entity["locations"]
+    nodes = [org]
+    for name in entity.get("products") or []:
+        product = {"@context": "https://schema.org", "@type": "Product",
+                   "@id": f"{site_url.rstrip('/')}/#product-{re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')}",
+                   "name": name, "url": site_url, "brand": {"@id": org_id}}
+        if entity.get("product_type") or entity.get("category"):
+            product["category"] = entity.get("product_type") or entity.get("category")
+        if entity.get("description"):
+            product["description"] = entity["description"]
+        if entity.get("features") or entity.get("use_cases"):
+            product["additionalProperty"] = [
+                {"@type": "PropertyValue", "name": "feature", "value": v}
+                for v in (entity.get("features") or []) + (entity.get("use_cases") or [])
+            ][:20]
+        if entity.get("audiences"):
+            product["audience"] = [{"@type": "Audience", "audienceType": a} for a in entity["audiences"][:10]]
+        nodes.append(product)
+    return nodes
+
+
 def _structured_data(
     content: PublicationContent,
     *,
@@ -128,6 +160,7 @@ def _structured_data(
     site_url: Optional[str],
     site_name: Optional[str],
     modified_time: Optional[datetime],
+    entity: Optional[dict] = None,
 ) -> List[dict]:
     """JSON-LD for the article. URLs always point at *canonical_url*; the
     Data Engine's json_ld supplies extra Article properties only."""
@@ -154,7 +187,11 @@ def _structured_data(
         article["inLanguage"] = discovery["language"]
     if modified_time:
         article["dateModified"] = modified_time.isoformat()
-    if site_name:
+    entity_nodes = entity_json_ld(entity, site_url=site_url) if entity and site_url else []
+    if entity_nodes:
+        article["publisher"] = {"@id": entity_nodes[0]["@id"]}
+        article.setdefault("author", {"@id": entity_nodes[0]["@id"]})
+    elif site_name:
         org = {"@type": "Organization", "name": site_name}
         if site_url:
             org["url"] = site_url
@@ -162,9 +199,11 @@ def _structured_data(
         article.setdefault("author", org)
     if discovery.get("entities"):
         article["about"] = [{"@type": "Thing", "name": name} for name in discovery["entities"][:12]]
+    if len(entity_nodes) > 1:
+        article["mentions"] = [{"@id": node["@id"]} for node in entity_nodes[1:]]
     if discovery.get("citations"):
         article["citation"] = [c["url"] for c in discovery["citations"][:20]]
-    data = [article]
+    data = [article, *entity_nodes]
     if discovery.get("faq"):
         data.append({
             "@context": "https://schema.org",
@@ -219,6 +258,7 @@ def render_page(
     site_name: Optional[str] = None,
     site_url: Optional[str] = None,
     modified_time: Optional[datetime] = None,
+    entity: Optional[dict] = None,
 ) -> str:
     """Return *shell_html* with the article's own head tags and its text in
     the app's root element (or right after ``<body>`` if there is none)."""
@@ -233,7 +273,7 @@ def render_page(
     if re.search(r"<title>.*?</title>", page, re.I | re.S):
         page = re.sub(r"<title>.*?</title>", f"<title>{title}</title>", page, count=1, flags=re.I | re.S)
     json_ld = _structured_data(content, canonical_url=canonical_url, site_url=site_url,
-                               site_name=site_name, modified_time=modified_time)
+                               site_name=site_name, modified_time=modified_time, entity=entity)
     head = "\n".join([
         f'<meta name="description" content="{description}" />',
         f'<link rel="canonical" href="{url}" />',
@@ -414,6 +454,17 @@ class SeoPages:
     def canonical_url(self, slug: str) -> str:
         return self._store.public_url(slug)
 
+    def entity(self) -> dict:
+        """The business's verified facts, from the most recent publication
+        that carried them (``content.discovery.entity``); empty if none."""
+        pages = sorted(self._published(), key=lambda p: p.updated_at or datetime.min, reverse=True)
+        for page in pages:
+            content = self._store.get_content(page.slug)
+            entity = ((content.discovery or {}).get("entity") if content else None) or {}
+            if entity.get("name"):
+                return {**entity, "website": self._site + "/"}
+        return {}
+
     # -- outputs ------------------------------------------------------------
 
     def page(self, slug: str) -> Optional[str]:
@@ -428,6 +479,7 @@ class SeoPages:
             site_name=self._site_name,
             site_url=self._site + "/",
             modified_time=self._modified(slug),
+            entity=self.entity(),
         )
 
     def markdown(self, slug: str) -> Optional[str]:
@@ -455,9 +507,20 @@ class SeoPages:
 
     def llms_txt(self) -> str:
         """llms.txt: what the site is and where its articles live."""
-        lines = [f"# {self._site_name or self._site}"]
-        if self._site_description:
-            lines += ["", f"> {self._site_description}"]
+        entity = self.entity()
+        lines = [f"# {entity.get('name') or self._site_name or self._site}"]
+        description = entity.get("description") or self._site_description
+        if description:
+            lines += ["", f"> {description}"]
+        about = [(label, entity.get(key)) for label, key in (
+            ("Category", "product_type"), ("Products", "products"), ("Features", "features"),
+            ("Use cases", "use_cases"), ("For", "audiences"), ("Locations", "locations"),
+            ("Pricing (as stated on this website)", "pricing"))]
+        about = [(label, value) for label, value in about if value]
+        if about:
+            lines += ["", "## About", ""] + [
+                f"- {label}: {'; '.join(value) if isinstance(value, list) else value}" for label, value in about]
+            lines.append(f"- Facts as structured data: {self._site}/entity.json")
         lines += ["", f"Website: {self._site}/",
                   f"Full text of all articles: {self._site}/llms-full.txt", "", "## Articles", ""]
         for page, content in self._articles():
@@ -494,6 +557,18 @@ class SeoPages:
             "home_page_url": self._site + "/",
             "feed_url": self._site + "/feed.json",
             "items": items,
+        }, ensure_ascii=False, indent=2)
+
+    def entity_json(self) -> Optional[str]:
+        """The verified facts as JSON (schema.org nodes plus plain facts),
+        or ``None`` before any publication carried them."""
+        entity = self.entity()
+        if not entity:
+            return None
+        return json.dumps({
+            "source": self._site + "/",
+            "facts": entity,
+            "json_ld": entity_json_ld(entity, site_url=self._site + "/"),
         }, ensure_ascii=False, indent=2)
 
     def robots_txt(self) -> str:
