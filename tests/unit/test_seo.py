@@ -200,3 +200,24 @@ def test_fastapi_router_serves_ai_outputs():
     for path in ("llms.txt", "llms-full.txt", "robots.txt"):
         assert client.get(f"/seo/{path}").headers["content-type"].startswith("text/plain")
     assert client.get("/seo/feed.json").headers["content-type"].startswith("application/feed+json")
+
+
+def test_indexnow_key_is_served_only_for_the_receiver_key():
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from tekjuice_connector.adapters.fastapi import create_seo_router
+    from tekjuice_connector.publication import indexnow_key
+
+    store = _store()
+    seo = _seo(store)
+    assert seo.indexnow_key_file("0" * 32) is None   # no receiver yet
+    receiver = PublicationReceiver(store=store, website_id="w", receiver_secret="s" * 40, seo=seo)
+    assert "ai.indexnow" in receiver.capabilities
+    key = indexnow_key("s" * 40)
+    assert len(key) == 32 and key != "s" * 32
+    app = fastapi.FastAPI()
+    app.include_router(create_seo_router(seo, prefix="/seo"))
+    client = TestClient(app)
+    response = client.get(f"/seo/indexnow/{key}")
+    assert response.status_code == 200 and response.text == key
+    assert client.get(f"/seo/indexnow/{'0' * 32}").status_code == 404

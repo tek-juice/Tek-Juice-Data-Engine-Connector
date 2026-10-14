@@ -27,7 +27,10 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   every output names the article's canonical URL. `create_seo_router` serves
   them; article responses carry a `Link: rel="canonical"` header.
 - With `seo=`, the receiver also advertises `ai.markdown`, `ai.llms_txt`,
-  `ai.feed`, `ai.robots`.
+  `ai.feed`, `ai.robots` and `ai.indexnow`: `create_seo_router` serves the
+  site's IndexNow key (`indexnow_key`, derived from the receiver secret) at
+  `{prefix}/indexnow/{key}`; route `/<key>.txt` there so the Data Engine can
+  notify Bing, Yandex and other IndexNow engines when an article goes live.
 - `SQLiteContentStore` stores `discovery` (column added automatically).
 
 ## [0.4.0] — 2026-10-14

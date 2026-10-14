@@ -34,6 +34,8 @@ framework adapters and docs/publication-seo.md).
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import html
 import json
 import re
@@ -319,6 +321,12 @@ def render_markdown(
     return "\n\n".join(parts) + "\n"
 
 
+def indexnow_key(receiver_secret: str) -> str:
+    """The site's IndexNow key: 32 hex characters derived from the receiver
+    secret (one-way; the Data Engine derives the same key)."""
+    return hmac.new(receiver_secret.encode("utf-8"), b"tekjuice-indexnow", hashlib.sha256).hexdigest()[:32]
+
+
 def build_robots_txt(site_url: str, *, private_paths: Sequence[str] = ()) -> str:
     """robots.txt that welcomes search and AI crawlers to public content."""
     site = site_url.rstrip("/")
@@ -382,6 +390,17 @@ class SeoPages:
         self._site_name = site_name
         self._site_description = site_description
         self._private = tuple(private_paths)
+        self._indexnow_key: Optional[str] = None
+
+    def set_indexnow_key(self, key: str) -> None:
+        """Called by PublicationReceiver; the key is served at /<key>.txt."""
+        self._indexnow_key = key
+
+    def indexnow_key_file(self, key: str) -> Optional[str]:
+        """Body of ``/<key>.txt`` for the site's IndexNow key, else ``None``."""
+        if self._indexnow_key and hmac.compare_digest(key, self._indexnow_key):
+            return self._indexnow_key
+        return None
 
     # -- helpers ------------------------------------------------------------
 

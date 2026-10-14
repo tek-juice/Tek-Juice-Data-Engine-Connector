@@ -35,6 +35,12 @@ entities, a direct answer, FAQ, citations and JSON-LD. The connector uses it:
   ClaudeBot, PerplexityBot, Google-Extended, ...) on public content and keeps
   `private_paths` closed.
 
+* **IndexNow** – the receiver derives the site's IndexNow key from its
+  secret and `create_seo_router` serves it at `indexnow/{key}`. Route
+  `/<key>.txt` there (see the nginx example) and the Data Engine notifies
+  Bing (which feeds ChatGPT search and Copilot), Yandex and the other
+  IndexNow engines as soon as each article is live.
+
 `create_seo_router` serves all of them under its prefix: `sitemap.xml`,
 `robots.txt`, `llms.txt`, `llms-full.txt`, `feed.json`, `page/{slug}`,
 `markdown/{slug}`. Article responses carry `Link: <canonical>; rel="canonical"`.
@@ -74,6 +80,7 @@ location = /llms.txt       { proxy_pass http://backend/api/tekjuice/seo/llms.txt
 location = /llms-full.txt  { proxy_pass http://backend/api/tekjuice/seo/llms-full.txt; }
 location = /feed.json      { proxy_pass http://backend/api/tekjuice/seo/feed.json; }
 location ~ ^/([A-Za-z0-9_-]+)\.md$ { proxy_pass http://backend/api/tekjuice/seo/markdown/$1; }
+location ~ "^/([a-f0-9]{32})\.txt$" { proxy_pass http://backend/api/tekjuice/seo/indexnow/$1; }
 
 location / {
     try_files $uri @tekjuice_page;

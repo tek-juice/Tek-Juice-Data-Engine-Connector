@@ -75,6 +75,9 @@ CAPABILITY_AI_LLMS_TXT = "ai.llms_txt"
 CAPABILITY_AI_MARKDOWN = "ai.markdown"
 CAPABILITY_AI_FEED = "ai.feed"
 CAPABILITY_AI_ROBOTS = "ai.robots"
+# The site serves its IndexNow key at /<key>.txt, so the Data Engine can
+# notify search engines (Bing, Yandex, ...) the moment an article is live.
+CAPABILITY_AI_INDEXNOW = "ai.indexnow"
 
 SLUG_MAX_LENGTH = 120
 _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")

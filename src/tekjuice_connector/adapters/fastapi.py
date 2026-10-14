@@ -53,6 +53,8 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
     * ``{prefix}/markdown/{slug}``: the article as Markdown (serve it at
       ``/{slug}.md``)
     * ``{prefix}/llms.txt``, ``{prefix}/llms-full.txt``, ``{prefix}/feed.json``
+    * ``{prefix}/indexnow/{key}``: the IndexNow key file (serve it at
+      ``/{key}.txt``)
 
     Article routes return 404 for anything that is not a published article,
     so the web server can fall back to the site's normal page. Article
@@ -95,6 +97,15 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
         ("page/{slug}", article(seo.page, "text/html; charset=utf-8"), "page"),
         ("markdown/{slug}", article(seo.markdown, "text/markdown; charset=utf-8"), "markdown"),
     ]
+
+    async def indexnow(key: str) -> Response:
+        body = seo.indexnow_key_file(key)
+        if body is None:
+            return Response(status_code=404)
+        return Response(content=body, media_type="text/plain; charset=utf-8",
+                        headers={"Cache-Control": "public, max-age=86400"})
+
+    routes.append(("indexnow/{key}", indexnow, "indexnow"))
     for path, handler, name in routes:
         router.add_api_route(f"{prefix}/{path}", handler, methods=["GET"],
                              include_in_schema=False, name=f"tekjuice_seo_{name}")
