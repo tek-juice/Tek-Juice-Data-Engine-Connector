@@ -121,12 +121,60 @@ def _description(content: PublicationContent) -> str:
     return text[:300]
 
 
-def entity_json_ld(entity: dict, *, site_url: str) -> List[dict]:
+_SOFTWARE_WORDS = ("software", "app", "application", "saas", "platform", "web based", "web-based", "online tool")
+_FINANCE_WORDS = ("finance", "financial", "budget", "expense", "accounting", "money", "invoice", "payroll", "banking")
+_CURRENCIES = {"£": "GBP", "$": "USD", "€": "EUR"}
+_PRICE = re.compile(r"([£$€])\s?(\d[\d,]*(?:\.\d{1,2})?)")
+
+
+def _text_of(entity: dict) -> str:
+    parts = [entity.get(k) or "" for k in ("product_type", "category", "description")]
+    parts += [*(entity.get("features") or []), *(entity.get("use_cases") or [])]
+    return " ".join(str(p) for p in parts).lower()
+
+
+def offers_from_pricing(pricing: Sequence[str]) -> Optional[dict]:
+    """An Offer from verified pricing, only when the price and currency are
+    stated unambiguously ("£0", "$9.99 per month"); several prices give an
+    AggregateOffer. Free without a stated currency gives nothing."""
+    found = [(_CURRENCIES[sym], amount.replace(",", "")) for text in pricing for sym, amount in _PRICE.findall(text)]
+    currencies = {c for c, _ in found}
+    if not found or len(currencies) != 1:
+        return None
+    currency = currencies.pop()
+    prices = sorted({float(a) for _, a in found})
+    fmt = lambda v: f"{v:.2f}".rstrip("0").rstrip(".")  # noqa: E731
+    if len(prices) == 1:
+        return {"@type": "Offer", "price": fmt(prices[0]), "priceCurrency": currency}
+    return {"@type": "AggregateOffer", "lowPrice": fmt(prices[0]), "highPrice": fmt(prices[-1]),
+            "priceCurrency": currency, "offerCount": len(prices)}
+
+
+def _shows_price(page_text: str, offer: dict) -> bool:
+    """The page states the offer's price with its currency ("£0", "$9.99"),
+    or says "free" when the price is zero."""
+    symbol = next(sym for sym, code in _CURRENCIES.items() if code == offer["priceCurrency"])
+    amounts = [offer.get("price"), offer.get("lowPrice")]
+    if any(a and re.search(re.escape(symbol) + r"\s?" + re.escape(a) + r"(?![\d.])", page_text) for a in amounts):
+        return True
+    return "0" in amounts and re.search(r"\bfree\b", page_text) is not None
+
+
+def entity_json_ld(entity: dict, *, site_url: str, visible_text: Optional[str] = None) -> List[dict]:
     """Organization and product nodes from the business's verified facts.
-    The organization's URL is always *site_url* (the site serving them)."""
+
+    The organization's URL is always *site_url* (the site serving them).
+    Software products are SoftwareApplication nodes; the Offer appears only
+    when the verified pricing states a price and currency. With
+    *visible_text* (an article page), a product node is included only when
+    the page shows the product's name, and its offer only when the page
+    shows the price, so structured data never describes what the page does
+    not show.
+    """
     if not entity.get("name"):
         return []
-    org_id = site_url.rstrip("/") + "/#organization"
+    base = site_url.rstrip("/")
+    org_id = base + "/#organization"
     org = {"@context": "https://schema.org", "@type": "Organization", "@id": org_id,
            "name": entity["name"], "url": site_url}
     if entity.get("description"):
@@ -134,22 +182,40 @@ def entity_json_ld(entity: dict, *, site_url: str) -> List[dict]:
     if entity.get("locations"):
         org["areaServed"] = entity["locations"]
     nodes = [org]
+    facts_text = _text_of(entity)
+    software = any(w in facts_text for w in _SOFTWARE_WORDS)
+    offer = offers_from_pricing(entity.get("pricing") or [])
+    page_text = (visible_text or "").lower()
     for name in entity.get("products") or []:
-        product = {"@context": "https://schema.org", "@type": "Product",
-                   "@id": f"{site_url.rstrip('/')}/#product-{re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')}",
-                   "name": name, "url": site_url, "brand": {"@id": org_id}}
-        if entity.get("product_type") or entity.get("category"):
-            product["category"] = entity.get("product_type") or entity.get("category")
+        if visible_text is not None and not re.search(r"(?<![\w])" + re.escape(name.lower()) + r"(?![\w])", page_text):
+            continue
+        node = {"@context": "https://schema.org", "@type": "SoftwareApplication" if software else "Product",
+                "@id": f"{base}/#product-{re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')}",
+                "name": name, "url": site_url}
+        node["publisher" if software else "brand"] = {"@id": org_id}
+        if software:
+            if any(w in facts_text for w in _FINANCE_WORDS):
+                node["applicationCategory"] = "FinanceApplication"
+            elif entity.get("category"):
+                node["applicationCategory"] = entity["category"]
+            if "browser" in facts_text or "web based" in facts_text or "web-based" in facts_text:
+                node["operatingSystem"] = "Web browser"
+        elif entity.get("product_type") or entity.get("category"):
+            node["category"] = entity.get("product_type") or entity.get("category")
         if entity.get("description"):
-            product["description"] = entity["description"]
-        if entity.get("features") or entity.get("use_cases"):
-            product["additionalProperty"] = [
-                {"@type": "PropertyValue", "name": "feature", "value": v}
-                for v in (entity.get("features") or []) + (entity.get("use_cases") or [])
-            ][:20]
+            node["description"] = entity["description"]
+        if entity.get("features"):
+            if software:
+                node["featureList"] = list(entity["features"])[:20]
+            else:
+                node["additionalProperty"] = [{"@type": "PropertyValue", "name": "feature", "value": v}
+                                              for v in entity["features"][:20]]
         if entity.get("audiences"):
-            product["audience"] = [{"@type": "Audience", "audienceType": a} for a in entity["audiences"][:10]]
-        nodes.append(product)
+            node["audience"] = [{"@type": "Audience", "audienceType": a} for a in entity["audiences"][:10]]
+        shows_price = visible_text is None or (offer is not None and _shows_price(page_text, offer))
+        if offer and shows_price:
+            node["offers"] = {**offer, "url": site_url}
+        nodes.append(node)
     return nodes
 
 
@@ -187,7 +253,11 @@ def _structured_data(
         article["inLanguage"] = discovery["language"]
     if modified_time:
         article["dateModified"] = modified_time.isoformat()
-    entity_nodes = entity_json_ld(entity, site_url=site_url) if entity and site_url else []
+    visible = " ".join([content.title, content.body or "",
+                        *(str(v) for k, v in discovery.items() if k in ("direct_answer", "summary")),
+                        *(discovery.get("key_takeaways") or [])])
+    entity_nodes = (entity_json_ld(entity, site_url=site_url, visible_text=visible)
+                    if entity and site_url else [])
     if entity_nodes:
         article["publisher"] = {"@id": entity_nodes[0]["@id"]}
         article.setdefault("author", {"@id": entity_nodes[0]["@id"]})

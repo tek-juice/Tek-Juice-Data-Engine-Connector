@@ -38,6 +38,12 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   advertises `ai.entity`; pages carry Organization and Product JSON-LD (the
   organization URL is always this site), `llms.txt` gains an "About"
   section, and `create_seo_router` serves `entity.json`.
+- Structured data follows the page: software products are
+  SoftwareApplication (with `applicationCategory`, `operatingSystem` and
+  `featureList` from verified facts); an Offer / AggregateOffer is added
+  only when the verified pricing states a price and currency; on article
+  pages the product appears only when the page shows its name, and its
+  offer only when the page shows the price.
 
 ## [0.4.0] — 2026-10-14
 

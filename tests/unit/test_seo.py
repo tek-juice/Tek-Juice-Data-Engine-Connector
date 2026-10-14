@@ -1,5 +1,6 @@
 """Pre-rendered article pages and sitemap (seo.prerender / seo.sitemap)."""
 
+import json
 from datetime import datetime, timezone
 
 import pytest
@@ -228,10 +229,11 @@ ENTITY = {"name": "Acme Budget", "website": "https://elsewhere.example/", "descr
           "audiences": ["Households"], "pricing": ["Free plan available"]}
 
 
-def _entity_store():
+def _entity_store(body_extra=" Acme Budget makes this easy."):
     from dataclasses import replace
     store = InMemoryContentStore("https://site.example")
-    store.create(replace(ARTICLE, discovery={**DISCOVERY, "entity": ENTITY}), execution_id="e1", idempotency_key="k1")
+    store.create(replace(ARTICLE, body=ARTICLE.body + body_extra, discovery={**DISCOVERY, "entity": ENTITY}),
+                 execution_id="e1", idempotency_key="k1")
     return store
 
 
@@ -275,3 +277,30 @@ def test_receiver_advertises_entity_and_router_serves_it():
     app.include_router(create_seo_router(seo, prefix="/seo"))
     response = TestClient(app).get("/seo/entity.json")
     assert response.status_code == 200 and response.json()["facts"]["name"] == "Acme Budget"
+
+
+
+def test_product_data_only_on_pages_that_show_the_product():
+    seo = _seo(_entity_store(body_extra=""))
+    types = [d["@type"] for d in _json_ld(seo.page("tracking-every-expense"))]
+    assert "Organization" in types and "Product" not in types
+    assert "Product" in [n["@type"] for n in json.loads(seo.entity_json())["json_ld"]]   # facts feed keeps it
+
+
+def test_software_products_get_software_application_and_verified_offer():
+    from tekjuice_connector.publication.seo import entity_json_ld, offers_from_pricing
+    entity = {"name": "Acme", "products": ["Acme"], "category": "Personal finance software",
+              "features": ["Works in any modern browser"], "pricing": ["Free: £0, free forever"]}
+    org, app = entity_json_ld(entity, site_url="https://site.example/")
+    assert app["@type"] == "SoftwareApplication" and app["publisher"] == {"@id": org["@id"]}
+    assert app["applicationCategory"] == "FinanceApplication" and app["operatingSystem"] == "Web browser"
+    assert app["offers"] == {"@type": "Offer", "price": "0", "priceCurrency": "GBP", "url": "https://site.example/"}
+    assert app["featureList"] == ["Works in any modern browser"]
+    # The offer only where the page shows the price.
+    assert "offers" not in entity_json_ld(entity, site_url="https://site.example/", visible_text="Acme helps.")[1]
+    assert "offers" in entity_json_ld(entity, site_url="https://site.example/", visible_text="Acme is free.")[1]
+    # Price and currency must be stated; mixed currencies are ambiguous.
+    assert offers_from_pricing(["Free forever"]) is None
+    assert offers_from_pricing(["$5", "€6"]) is None
+    assert offers_from_pricing(["Basic $5/month", "Pro $12.50/month"]) == {
+        "@type": "AggregateOffer", "lowPrice": "5", "highPrice": "12.5", "priceCurrency": "USD", "offerCount": 2}
