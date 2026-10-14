@@ -14,6 +14,8 @@ Method              Required               Capability
 ``public_url``      yes
 ``update``          optional               ``publish.update``
 ``validate``        optional               (extra dry-run checks)
+``get_content``     optional               (``seo.prerender`` via SeoPages)
+``list_published``  optional               (``seo.sitemap`` via SeoPages)
 ==================  =====================  ================================
 
 Contract for implementers
@@ -130,6 +132,11 @@ class InMemoryContentStore:
     def get_content(self, slug: str) -> Optional[PublicationContent]:
         return self._content.get(slug)
 
+    def list_published(self):
+        from tekjuice_connector.publication.seo import PublishedPage
+
+        return [PublishedPage(slug=slug) for slug in sorted(self._content)]
+
     def create(self, content, *, execution_id, idempotency_key) -> StoredContent:
         with self._lock:
             if content.slug in self._by_slug:
@@ -223,6 +230,26 @@ class SQLiteContentStore:
 
     def find_by_idempotency_key(self, idempotency_key: str) -> Optional[StoredContent]:
         return self._fetch("idempotency_key", idempotency_key)
+
+    def get_content(self, slug: str) -> Optional[PublicationContent]:
+        row = self.get_row(slug)
+        if row is None:
+            return None
+        return PublicationContent(
+            title=row["title"], body=row["body"], slug=row["slug"], excerpt=row["excerpt"],
+            meta_description=row["meta_description"],
+            meta_keywords=[k for k in (row["meta_keywords"] or "").split(",") if k],
+        )
+
+    def list_published(self):
+        from tekjuice_connector.publication.seo import PublishedPage
+
+        with self._connect() as conn:
+            rows = conn.execute("SELECT slug, updated_at FROM tekjuice_content ORDER BY slug").fetchall()
+        return [
+            PublishedPage(slug=row["slug"], updated_at=datetime.fromisoformat(row["updated_at"]))
+            for row in rows
+        ]
 
     def get_row(self, slug: str) -> Optional[dict]:
         with self._connect() as conn:

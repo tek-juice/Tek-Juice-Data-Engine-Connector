@@ -17,6 +17,8 @@ the public endpoint URL through the connector handshake.
 
 from tekjuice_connector.publication.contract import (
     CAPABILITY_CREATE,
+    CAPABILITY_SEO_PRERENDER,
+    CAPABILITY_SEO_SITEMAP,
     CAPABILITY_UPDATE,
     CAPABILITY_VERIFY,
     CONTRACT_VERSION,
@@ -34,6 +36,13 @@ from tekjuice_connector.publication.errors import (
 )
 from tekjuice_connector.publication.receiver import PublicationReceiver, ReceiverResponse
 from tekjuice_connector.publication.registration import PublicationRegistration
+from tekjuice_connector.publication.seo import (
+    PublishedPage,
+    SeoPages,
+    build_sitemap,
+    markdown_to_html,
+    render_page,
+)
 from tekjuice_connector.publication.store import (
     ContentStore,
     InMemoryContentStore,
@@ -43,6 +52,8 @@ from tekjuice_connector.publication.store import (
 
 __all__ = [
     "CAPABILITY_CREATE",
+    "CAPABILITY_SEO_PRERENDER",
+    "CAPABILITY_SEO_SITEMAP",
     "CAPABILITY_UPDATE",
     "CAPABILITY_VERIFY",
     "CONTRACT_VERSION",
@@ -55,11 +66,16 @@ __all__ = [
     "PublicationError",
     "PublicationReceiver",
     "PublicationRegistration",
+    "PublishedPage",
     "PublishRequest",
     "ReceiverResponse",
     "SQLiteContentStore",
+    "SeoPages",
     "StoredContent",
     "TargetNotFoundError",
     "UnsupportedOperationError",
     "VerifyRequest",
+    "build_sitemap",
+    "markdown_to_html",
+    "render_page",
 ]

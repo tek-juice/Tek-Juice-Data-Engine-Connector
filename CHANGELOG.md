@@ -9,6 +9,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-14
+
+### Added
+- Search discoverability: `SeoPages` pre-renders published articles (own
+  title, meta description, canonical URL, Open Graph/Twitter tags, Article
+  JSON-LD, article text in the app root) and builds `sitemap.xml` from the
+  content store. `create_seo_router` mounts both on FastAPI.
+- `PublicationReceiver(seo=...)` advertises `seo.prerender` and
+  `seo.sitemap`; the Data Engine verifies them after each publication.
+- `SQLiteContentStore` / `InMemoryContentStore`: `get_content` and
+  `list_published`.
+
 ## [0.3.0] — 2026-10-12
 
 ### Added

@@ -56,6 +56,10 @@ from tekjuice_connector.publication.errors import (
     UnsupportedOperationError,
     WebsiteMismatchError,
 )
+from tekjuice_connector.publication.contract import (
+    CAPABILITY_SEO_PRERENDER,
+    CAPABILITY_SEO_SITEMAP,
+)
 from tekjuice_connector.publication.store import StoredContent, store_capabilities
 from tekjuice_connector.security.secrets import SecretStr
 
@@ -104,6 +108,7 @@ class PublicationReceiver:
         website_id: str,
         receiver_secret: Union[str, SecretStr],
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+        seo: object = None,
     ) -> None:
         secret = (
             receiver_secret.reveal()
@@ -126,7 +131,14 @@ class PublicationReceiver:
         self._website_id = str(website_id)
         self._secret = SecretStr(secret)
         self._max_body_bytes = max_body_bytes
-        self.capabilities = store_capabilities(store)
+        capabilities = set(store_capabilities(store))
+        # Discoverability is advertised only when the site actually serves
+        # it: pass the mounted SeoPages (see publication.seo).
+        if seo is not None:
+            capabilities.add(CAPABILITY_SEO_PRERENDER)
+            if callable(getattr(store, "list_published", None)):
+                capabilities.add(CAPABILITY_SEO_SITEMAP)
+        self.capabilities = frozenset(capabilities)
 
     # ------------------------------------------------------------------
     # Public API

@@ -64,6 +64,9 @@ ACTION_VERIFY = "verify"
 CAPABILITY_CREATE = "publish.create"
 CAPABILITY_UPDATE = "publish.update"
 CAPABILITY_VERIFY = "publish.verify"
+# Discoverability (tekjuice_connector.publication.seo)
+CAPABILITY_SEO_PRERENDER = "seo.prerender"
+CAPABILITY_SEO_SITEMAP = "seo.sitemap"
 
 SLUG_MAX_LENGTH = 120
 _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
