@@ -99,3 +99,23 @@ location @tekjuice_page {
 ```
 
 If the backend is unavailable the site keeps working: nginx serves the app.
+
+## Site changes (`site.changes`)
+
+When the Data Engine's audits find a problem on a page the customer owns
+(for example a canonical link pointing to the home page, or a noindex
+directive) or two articles competing for the same searches, an approved
+action can be applied through the receiver instead of a manual change:
+
+* `page_meta`: title, meta description, canonical and robots for a path.
+  `SeoPages` serves the site's own page (its `index.html`) with these head
+  tags; the body is unchanged.
+* `redirect`: a 301/302/307/308 from a path to another path on the site,
+  answered by `create_seo_router` (nginx passes it through).
+* `remove`: removes an override (rollback).
+
+Requests are authenticated like publications, validated (same-site targets,
+no loops or chains), idempotent, and every response includes the previous
+state. Implement `get_site_override`, `set_site_override`,
+`delete_site_override` and `list_site_overrides` in the store to enable it.
+

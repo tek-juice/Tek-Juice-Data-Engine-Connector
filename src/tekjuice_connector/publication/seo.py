@@ -537,11 +537,50 @@ class SeoPages:
 
     # -- outputs ------------------------------------------------------------
 
-    def page(self, slug: str) -> Optional[str]:
-        """Complete HTML for a published article, or ``None`` if *slug* is not one."""
-        content = self._store.get_content(slug)
-        if content is None:
+    # -- site overrides (site.changes) -------------------------------------
+
+    def _override(self, path: str) -> Optional[dict]:
+        getter = getattr(self._store, "get_site_override", None)
+        return getter(path) if callable(getter) else None
+
+    def redirect_for(self, path: str) -> Optional[tuple]:
+        """(absolute target URL, status code) when *path* is redirected."""
+        override = self._override("/" + path.strip("/") if path.strip("/") else "/")
+        redirect = (override or {}).get("redirect")
+        if not redirect:
             return None
+        return self._site + redirect["target"], int(redirect.get("status_code", 301))
+
+    def _override_page(self, path: str, meta: dict) -> str:
+        """The site's own page with overridden head metadata (title,
+        description, canonical, robots); the body is the site's own."""
+        page = _PAGE_SPECIFIC_HEAD.sub("", self._shell())
+        page = re.sub(r'<meta\s+name=["\']robots["\'][^>]*>\s*', "", page, flags=re.I)
+        tags = []
+        if meta.get("title"):
+            if re.search(r"<title>.*?</title>", page, re.I | re.S):
+                page = re.sub(r"<title>.*?</title>", f"<title>{html.escape(meta['title'])}</title>", page,
+                              count=1, flags=re.I | re.S)
+            else:
+                tags.append(f"<title>{html.escape(meta['title'])}</title>")
+        if meta.get("meta_description"):
+            tags.append(f'<meta name="description" content="{html.escape(meta["meta_description"], quote=True)}" />')
+        canonical = meta.get("canonical") or (self._site + path)
+        tags.append(f'<link rel="canonical" href="{html.escape(canonical, quote=True)}" />')
+        if meta.get("robots"):
+            tags.append(f'<meta name="robots" content="{html.escape(meta["robots"], quote=True)}" />')
+        head = "\n".join(tags)
+        return page.replace("</head>", head + "\n</head>", 1) if "</head>" in page else head + page
+
+    def page(self, slug: str) -> Optional[str]:
+        """Complete HTML for a published article, the site's own page with an
+        approved metadata override, or ``None``."""
+        slug = slug.strip("/")
+        content = self._store.get_content(slug) if slug else None
+        if content is None:
+            path = "/" + slug if slug else "/"
+            meta = (self._override(path) or {}).get("meta")
+            return self._override_page(path, meta) if meta else None
         return render_page(
             self._shell(),
             content=content,
@@ -560,11 +599,16 @@ class SeoPages:
                                site_name=self._site_name, modified_time=self._modified(slug))
 
     def sitemap(self) -> str:
+        def listed(path: str) -> bool:
+            override = self._override(path.rstrip("/") or "/") or {}
+            robots = (override.get("meta") or {}).get("robots") or ""
+            return not override.get("redirect") and "noindex" not in robots
+
         entries: List[Tuple[str, Optional[datetime]]] = [
             (self._site + (path if path.startswith("/") else "/" + path), None)
-            for path in self._static
+            for path in self._static if listed(path if path.startswith("/") else "/" + path)
         ]
-        entries += [(self.canonical_url(p.slug), p.updated_at) for p in self._published()]
+        entries += [(self.canonical_url(p.slug), p.updated_at) for p in self._published() if listed("/" + p.slug)]
         return build_sitemap(entries)
 
     def _articles(self) -> List[Tuple[PublishedPage, PublicationContent]]:

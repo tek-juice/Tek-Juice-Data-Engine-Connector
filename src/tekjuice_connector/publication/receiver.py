@@ -32,6 +32,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, Mapping, Optional, Union
 
+from tekjuice_connector.publication.site_changes import (
+    ACTION_SITE_CHANGE,
+    CAPABILITY_SITE_CHANGES,
+    apply_site_change,
+    parse_site_change,
+    store_supports_site_changes,
+)
 from tekjuice_connector.publication.contract import (
     ACTION_CREATE,
     ACTION_UPDATE,
@@ -147,6 +154,8 @@ class PublicationReceiver:
                                  CAPABILITY_AI_FEED, CAPABILITY_AI_ROBOTS, CAPABILITY_AI_ENTITY})
             # The IndexNow key is derived from the receiver secret, which the
             # Data Engine also holds, so neither side needs configuring.
+            if store_supports_site_changes(store):
+                capabilities.add(CAPABILITY_SITE_CHANGES)
             if callable(getattr(seo, "set_indexnow_key", None)):
                 from tekjuice_connector.publication.seo import indexnow_key
 
@@ -225,11 +234,21 @@ class PublicationReceiver:
 
         if action == ACTION_VERIFY:
             return self._verify(data)
+        if action == ACTION_SITE_CHANGE:
+            return self._site_change(data)
 
         request = parse_publish_request(data)
         if request.action == ACTION_CREATE:
             return self._create(request)
         return self._update(request)
+
+    def _site_change(self, data: Dict[str, Any]) -> ReceiverResponse:
+        self._require(CAPABILITY_SITE_CHANGES, ACTION_SITE_CHANGE)
+        base = self._store.public_url("").rstrip("/")
+        request = parse_site_change(data, base_url=base)
+        body = apply_site_change(self._store, request)
+        return ReceiverResponse(200, {**body, "contract_version": CONTRACT_VERSION, "website_id": self._website_id,
+                                      "idempotency_key": request.idempotency_key})
 
     def _authenticate(self, headers: Mapping[str, str]) -> None:
         authorization = _header(headers, "authorization") or ""

@@ -44,6 +44,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
   only when the verified pricing states a price and currency; on article
   pages the product appears only when the page shows its name, and its
   offer only when the page shows the price.
+- Site changes (`site.changes`, action `site_change`): approved fixes to the
+  customer's own pages that the Data Engine's audits found: head metadata
+  overrides (title, description, canonical, robots) applied by `SeoPages`
+  to the site's own page, and redirects (301/302/307/308) answered by
+  `create_seo_router`, for example to consolidate overlapping articles.
+  Same-site targets only, no loops or chains, idempotent replay, and each
+  response carries the previous state for rollback. Advertised only when
+  the store implements `get/set/delete/list_site_override(s)` and `seo=`
+  is mounted. `create_seo_router` serves `page/` (home) and nested paths.
 
 ## [0.4.0] — 2026-10-14
 

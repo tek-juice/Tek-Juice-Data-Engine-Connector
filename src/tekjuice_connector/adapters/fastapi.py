@@ -78,11 +78,20 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
         return handler
 
     def article(method, media_type):
-        async def handler(slug: str) -> Response:
+        async def handler(slug: str = "") -> Response:
+            if method == seo.page:
+                redirect = await run_in_threadpool(seo.redirect_for, slug)
+                if redirect:
+                    return Response(status_code=redirect[1], headers={"Location": redirect[0],
+                                                                      "Cache-Control": "public, max-age=300"})
             body = await run_in_threadpool(method, slug)
             if body is None:
                 return Response(status_code=404)
-            canonical = seo.canonical_url(slug)
+            canonical = seo.canonical_url(slug.strip("/"))
+            override_meta = (seo._override("/" + slug.strip("/") if slug.strip("/") else "/") or {}).get("meta") \
+                if method == seo.page else None
+            if override_meta and override_meta.get("canonical"):
+                canonical = override_meta["canonical"]
             return Response(content=body, media_type=media_type, headers={
                 "Cache-Control": "public, max-age=300",
                 "Link": f'<{canonical}>; rel="canonical"',
@@ -95,7 +104,8 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
         ("llms.txt", site_wide(seo.llms_txt, "text/plain; charset=utf-8"), "llms"),
         ("llms-full.txt", site_wide(seo.llms_full_txt, "text/plain; charset=utf-8"), "llms_full"),
         ("feed.json", site_wide(seo.feed_json, "application/feed+json"), "feed"),
-        ("page/{slug}", article(seo.page, "text/html; charset=utf-8"), "page"),
+        ("page/", article(seo.page, "text/html; charset=utf-8"), "page_home"),
+        ("page/{slug:path}", article(seo.page, "text/html; charset=utf-8"), "page"),
         ("markdown/{slug}", article(seo.markdown, "text/markdown; charset=utf-8"), "markdown"),
     ]
 

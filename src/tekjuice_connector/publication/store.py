@@ -112,6 +112,7 @@ class InMemoryContentStore:
         self._base = public_base_url.rstrip("/")
         self._by_slug: Dict[str, StoredContent] = {}
         self._content: Dict[str, PublicationContent] = {}
+        self._overrides: Dict[str, Dict] = {}
         self._lock = threading.Lock()
         if not supports_update:
             # Instance attribute shadows the method so capability detection
@@ -137,6 +138,21 @@ class InMemoryContentStore:
         from tekjuice_connector.publication.seo import PublishedPage
 
         return [PublishedPage(slug=slug) for slug in sorted(self._content)]
+
+    # Site overrides (site.changes)
+    def get_site_override(self, path: str) -> Optional[Dict]:
+        return self._overrides.get(path)
+
+    def set_site_override(self, path: str, override: Dict) -> None:
+        with self._lock:
+            self._overrides[path] = dict(override)
+
+    def delete_site_override(self, path: str) -> None:
+        with self._lock:
+            self._overrides.pop(path, None)
+
+    def list_site_overrides(self) -> Dict[str, Dict]:
+        return dict(self._overrides)
 
     def create(self, content, *, execution_id, idempotency_key) -> StoredContent:
         with self._lock:
@@ -199,6 +215,29 @@ class SQLiteContentStore:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(tekjuice_content)")}
             if "discovery" not in columns:  # databases created before 0.4.0
                 conn.execute("ALTER TABLE tekjuice_content ADD COLUMN discovery TEXT")
+            conn.execute("""CREATE TABLE IF NOT EXISTS tekjuice_site_overrides (
+                path TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+
+    # Site overrides (site.changes)
+    def get_site_override(self, path: str) -> Optional[Dict]:
+        with self._connect() as conn:
+            row = conn.execute("SELECT data FROM tekjuice_site_overrides WHERE path = ?", (path,)).fetchone()
+        return json.loads(row["data"]) if row else None
+
+    def set_site_override(self, path: str, override: Dict) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO tekjuice_site_overrides (path, data, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(path) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at",
+                (path, json.dumps(override), datetime.now(timezone.utc).isoformat()))
+
+    def delete_site_override(self, path: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM tekjuice_site_overrides WHERE path = ?", (path,))
+
+    def list_site_overrides(self) -> Dict[str, Dict]:
+        with self._connect() as conn:
+            return {r["path"]: json.loads(r["data"]) for r in conn.execute("SELECT path, data FROM tekjuice_site_overrides")}
 
     def _connect(self) -> sqlite3.Connection:
         try:
