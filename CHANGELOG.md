@@ -9,6 +9,27 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-14
+
+### Added
+- AI discoverability (GEO / AEO / LEO / voice). The Data Engine may send
+  `content.discovery` (summary, key takeaways, entities, direct answer, FAQ,
+  citations, JSON-LD, language) to receivers advertising `publish.discovery`
+  (always advertised from 0.5.0). It is validated, size-limited
+  (`DISCOVERY_MAX_BYTES`), stored, and excluded from the content hash.
+- Pre-rendered pages render it: Article JSON-LD (URL forced to the canonical
+  URL, publisher, `dateModified`, `about`, `citation`, `speakable`),
+  FAQPage and BreadcrumbList JSON-LD; visible direct answer, key takeaways
+  and FAQ; `<link rel="alternate" type="text/markdown">`. JSON-LD from the
+  site's shell is replaced.
+- `SeoPages.markdown`, `llms_txt`, `llms_full_txt`, `feed_json` (JSON Feed
+  1.1), `robots_txt` (welcomes AI crawlers, keeps `private_paths` closed);
+  every output names the article's canonical URL. `create_seo_router` serves
+  them; article responses carry a `Link: rel="canonical"` header.
+- With `seo=`, the receiver also advertises `ai.markdown`, `ai.llms_txt`,
+  `ai.feed`, `ai.robots`.
+- `SQLiteContentStore` stores `discovery` (column added automatically).
+
 ## [0.4.0] — 2026-10-14
 
 ### Added

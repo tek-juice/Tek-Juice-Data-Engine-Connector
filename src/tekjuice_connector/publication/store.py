@@ -32,6 +32,7 @@ Contract for implementers
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import uuid
@@ -182,6 +183,7 @@ class SQLiteContentStore:
             excerpt          TEXT,
             meta_description TEXT,
             meta_keywords    TEXT NOT NULL DEFAULT '',
+            discovery        TEXT,
             execution_id     TEXT NOT NULL,
             idempotency_key  TEXT NOT NULL UNIQUE,
             content_hash     TEXT NOT NULL,
@@ -194,6 +196,9 @@ class SQLiteContentStore:
         self._base = public_base_url.rstrip("/")
         with self._connect() as conn:
             conn.execute(self._SCHEMA)
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(tekjuice_content)")}
+            if "discovery" not in columns:  # databases created before 0.4.0
+                conn.execute("ALTER TABLE tekjuice_content ADD COLUMN discovery TEXT")
 
     def _connect(self) -> sqlite3.Connection:
         try:
@@ -239,6 +244,7 @@ class SQLiteContentStore:
             title=row["title"], body=row["body"], slug=row["slug"], excerpt=row["excerpt"],
             meta_description=row["meta_description"],
             meta_keywords=[k for k in (row["meta_keywords"] or "").split(",") if k],
+            discovery=json.loads(row["discovery"]) if row.get("discovery") else None,
         )
 
     def list_published(self):
@@ -267,8 +273,8 @@ class SQLiteContentStore:
                     INSERT INTO tekjuice_content
                         (resource_id, slug, title, body, excerpt, meta_description,
                          meta_keywords, execution_id, idempotency_key,
-                         content_hash, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         content_hash, updated_at, discovery)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         resource_id,
@@ -282,6 +288,7 @@ class SQLiteContentStore:
                         idempotency_key,
                         content.content_hash(),
                         datetime.now(timezone.utc).isoformat(),
+                        json.dumps(content.discovery) if content.discovery else None,
                     ),
                 )
         except sqlite3.IntegrityError as exc:
@@ -300,7 +307,7 @@ class SQLiteContentStore:
                     UPDATE tekjuice_content
                     SET title = ?, body = ?, excerpt = ?, meta_description = ?,
                         meta_keywords = ?, execution_id = ?, idempotency_key = ?,
-                        content_hash = ?, updated_at = ?
+                        content_hash = ?, updated_at = ?, discovery = ?
                     WHERE resource_id = ?
                     """,
                     (
@@ -313,6 +320,7 @@ class SQLiteContentStore:
                         idempotency_key,
                         content.content_hash(),
                         datetime.now(timezone.utc).isoformat(),
+                        json.dumps(content.discovery) if content.discovery else None,
                         existing.resource_id,
                     ),
                 )

@@ -57,6 +57,11 @@ from tekjuice_connector.publication.errors import (
     WebsiteMismatchError,
 )
 from tekjuice_connector.publication.contract import (
+    CAPABILITY_AI_FEED,
+    CAPABILITY_AI_LLMS_TXT,
+    CAPABILITY_AI_MARKDOWN,
+    CAPABILITY_AI_ROBOTS,
+    CAPABILITY_DISCOVERY,
     CAPABILITY_SEO_PRERENDER,
     CAPABILITY_SEO_SITEMAP,
 )
@@ -131,11 +136,13 @@ class PublicationReceiver:
         self._website_id = str(website_id)
         self._secret = SecretStr(secret)
         self._max_body_bytes = max_body_bytes
-        capabilities = set(store_capabilities(store))
+        capabilities = set(store_capabilities(store)) | {CAPABILITY_DISCOVERY}
         # Discoverability is advertised only when the site actually serves
         # it: pass the mounted SeoPages (see publication.seo).
         if seo is not None:
             capabilities.add(CAPABILITY_SEO_PRERENDER)
+            capabilities.update({CAPABILITY_AI_LLMS_TXT, CAPABILITY_AI_MARKDOWN,
+                                 CAPABILITY_AI_FEED, CAPABILITY_AI_ROBOTS})
             if callable(getattr(store, "list_published", None)):
                 capabilities.add(CAPABILITY_SEO_SITEMAP)
         self.capabilities = frozenset(capabilities)

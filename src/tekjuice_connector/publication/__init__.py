@@ -37,10 +37,13 @@ from tekjuice_connector.publication.errors import (
 from tekjuice_connector.publication.receiver import PublicationReceiver, ReceiverResponse
 from tekjuice_connector.publication.registration import PublicationRegistration
 from tekjuice_connector.publication.seo import (
+    AI_CRAWLERS,
     PublishedPage,
     SeoPages,
+    build_robots_txt,
     build_sitemap,
     markdown_to_html,
+    render_markdown,
     render_page,
 )
 from tekjuice_connector.publication.store import (
@@ -75,7 +78,10 @@ __all__ = [
     "TargetNotFoundError",
     "UnsupportedOperationError",
     "VerifyRequest",
+    "AI_CRAWLERS",
+    "build_robots_txt",
     "build_sitemap",
     "markdown_to_html",
+    "render_markdown",
     "render_page",
 ]

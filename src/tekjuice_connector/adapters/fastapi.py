@@ -46,10 +46,18 @@ def create_router(receiver: "PublicationReceiver", *, path: str = "/tekjuice/pub
 
 
 def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
-    """Return an ``APIRouter`` serving ``{prefix}/sitemap.xml`` and
-    pre-rendered article pages at ``{prefix}/page/{slug}`` (404 for anything
-    that is not a published article, so the web server can fall back to the
-    site's normal page)."""
+    """Return an ``APIRouter`` serving the site's discoverability outputs:
+
+    * ``{prefix}/sitemap.xml`` and ``{prefix}/robots.txt``
+    * ``{prefix}/page/{slug}``: the pre-rendered article page
+    * ``{prefix}/markdown/{slug}``: the article as Markdown (serve it at
+      ``/{slug}.md``)
+    * ``{prefix}/llms.txt``, ``{prefix}/llms-full.txt``, ``{prefix}/feed.json``
+
+    Article routes return 404 for anything that is not a published article,
+    so the web server can fall back to the site's normal page. Article
+    responses carry a ``Link: <canonical>; rel="canonical"`` header.
+    """
     try:
         from fastapi import APIRouter
         from fastapi.responses import Response
@@ -59,20 +67,35 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
 
     router = APIRouter()
 
-    async def sitemap() -> Response:
-        body = await run_in_threadpool(seo.sitemap)
-        return Response(content=body, media_type="application/xml",
-                        headers={"Cache-Control": "public, max-age=900"})
+    def site_wide(method, media_type, max_age=900):
+        async def handler() -> Response:
+            body = await run_in_threadpool(method)
+            return Response(content=body, media_type=media_type,
+                            headers={"Cache-Control": f"public, max-age={max_age}"})
+        return handler
 
-    async def page(slug: str) -> Response:
-        body = await run_in_threadpool(seo.page, slug)
-        if body is None:
-            return Response(status_code=404)
-        return Response(content=body, media_type="text/html; charset=utf-8",
-                        headers={"Cache-Control": "public, max-age=300"})
+    def article(method, media_type):
+        async def handler(slug: str) -> Response:
+            body = await run_in_threadpool(method, slug)
+            if body is None:
+                return Response(status_code=404)
+            canonical = seo.canonical_url(slug)
+            return Response(content=body, media_type=media_type, headers={
+                "Cache-Control": "public, max-age=300",
+                "Link": f'<{canonical}>; rel="canonical"',
+            })
+        return handler
 
-    router.add_api_route(f"{prefix}/sitemap.xml", sitemap, methods=["GET"],
-                         include_in_schema=False, name="tekjuice_seo_sitemap")
-    router.add_api_route(f"{prefix}/page/{{slug}}", page, methods=["GET"],
-                         include_in_schema=False, name="tekjuice_seo_page")
+    routes = [
+        ("sitemap.xml", site_wide(seo.sitemap, "application/xml"), "sitemap"),
+        ("robots.txt", site_wide(seo.robots_txt, "text/plain; charset=utf-8"), "robots"),
+        ("llms.txt", site_wide(seo.llms_txt, "text/plain; charset=utf-8"), "llms"),
+        ("llms-full.txt", site_wide(seo.llms_full_txt, "text/plain; charset=utf-8"), "llms_full"),
+        ("feed.json", site_wide(seo.feed_json, "application/feed+json"), "feed"),
+        ("page/{slug}", article(seo.page, "text/html; charset=utf-8"), "page"),
+        ("markdown/{slug}", article(seo.markdown, "text/markdown; charset=utf-8"), "markdown"),
+    ]
+    for path, handler, name in routes:
+        router.add_api_route(f"{prefix}/{path}", handler, methods=["GET"],
+                             include_in_schema=False, name=f"tekjuice_seo_{name}")
     return router

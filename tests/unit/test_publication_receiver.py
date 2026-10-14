@@ -64,10 +64,10 @@ def test_store_missing_required_method_is_rejected():
 
 def test_capabilities_reflect_store_support():
     assert _receiver().capabilities == {
-        "publish.create", "publish.update", "publish.verify"
+        "publish.create", "publish.discovery", "publish.update", "publish.verify"
     }
     no_update = _receiver(store=InMemoryContentStore(PUBLIC_BASE_URL, supports_update=False))
-    assert no_update.capabilities == {"publish.create", "publish.verify"}
+    assert no_update.capabilities == {"publish.create", "publish.discovery", "publish.verify"}
 
 
 def test_receiver_repr_never_contains_secret():
@@ -292,7 +292,7 @@ def test_verify_validates_without_persisting():
         "challenge": "one-time",
         "website_id": WEBSITE_ID,
         "persisted": False,
-        "capabilities": ["publish.create", "publish.update", "publish.verify"],
+        "capabilities": ["publish.create", "publish.discovery", "publish.update", "publish.verify"],
         "contract_versions": ["1.0"],
         "would_publish_url": f"{PUBLIC_BASE_URL}/tekjuice-verification-0a1b2c",
     }

@@ -102,3 +102,101 @@ def test_fastapi_router_serves_sitemap_and_pages():
     page = client.get("/seo/page/tracking-every-expense")
     assert page.status_code == 200 and "Tracking Every Expense" in page.text
     assert client.get("/seo/page/dashboard").status_code == 404
+
+
+DISCOVERY = {
+    "summary": "Tracking every expense shows where money goes and makes budgets realistic.",
+    "key_takeaways": ["Log spending the day it happens", "Review categories weekly"],
+    "entities": ["Expense tracking", "Budgeting"],
+    "direct_answer": "Record each purchase as it happens and review your categories once a week.",
+    "faq": [{"question": "How often should I review expenses?", "answer": "Once a week works for most people."}],
+    "citations": [{"url": "https://www.gov.uk/budgeting", "title": "Budgeting"}],
+    "json_ld": [{"@context": "https://schema.org", "@type": "Article", "url": "https://wrong.example/x",
+                 "headline": "x", "wordCount": 400}],
+    "language": "en-GB",
+}
+
+
+def _discovery_store():
+    from dataclasses import replace
+    store = InMemoryContentStore("https://site.example")
+    store.create(replace(ARTICLE, discovery=DISCOVERY), execution_id="e1", idempotency_key="k1")
+    return store
+
+
+def _json_ld(page):
+    import json
+    import re
+    return [json.loads(m) for m in re.findall(r'<script type="application/ld\+json">(.*?)</script>', page, re.S)]
+
+
+def test_structured_data_uses_the_canonical_url_and_discovery():
+    page = _seo(_discovery_store()).page("tracking-every-expense")
+    data = {item["@type"]: item for item in _json_ld(page)}
+    article = data["Article"]
+    assert article["url"] == "https://site.example/tracking-every-expense"
+    assert article["mainEntityOfPage"]["@id"] == "https://site.example/tracking-every-expense"
+    assert "wrong.example" not in page
+    assert article["wordCount"] == 400 and article["inLanguage"] == "en-GB"
+    assert article["publisher"]["name"] == "UMET"
+    assert article["speakable"]["cssSelector"] == ["#tj-answer", "#tj-summary"]
+    assert article["citation"] == ["https://www.gov.uk/budgeting"]
+    assert data["FAQPage"]["mainEntity"][0]["name"] == "How often should I review expenses?"
+    assert data["BreadcrumbList"]["itemListElement"][1]["item"] == "https://site.example/tracking-every-expense"
+    assert '<p id="tj-answer">Record each purchase' in page
+    assert '<section id="tj-summary">' in page and "Review categories weekly" in page
+    assert "<h3>How often should I review expenses?</h3>" in page
+    assert '<link rel="alternate" type="text/markdown" href="https://site.example/tracking-every-expense.md" />' in page
+
+
+def test_shell_json_ld_is_replaced():
+    shell = SHELL.replace("</head>", '<script type="application/ld+json">{"@type":"SoftwareApplication"}</script></head>')
+    seo = SeoPages(_store(), site_url="https://site.example", shell_html=lambda: shell)
+    page = seo.page("tracking-every-expense")
+    assert "SoftwareApplication" not in page
+    assert [d["@type"] for d in _json_ld(page)] == ["Article", "BreadcrumbList"]
+
+
+def test_markdown_names_the_canonical_source():
+    md = _seo(_discovery_store()).markdown("tracking-every-expense")
+    assert md.startswith("---\ntitle: \"Tracking Every Expense Without the Stress\"\n")
+    assert "canonical: https://site.example/tracking-every-expense" in md
+    assert "Source: [https://site.example/tracking-every-expense](https://site.example/tracking-every-expense), published by UMET" in md
+    assert "**Answer:** Record each purchase" in md
+    assert "## Key takeaways" in md and "## Frequently asked questions" in md
+    assert _seo(_store()).markdown("dashboard") is None
+
+
+def test_llms_txt_feed_and_robots():
+    seo = SeoPages(_discovery_store(), site_url="https://site.example", shell_html=lambda: SHELL,
+                   site_name="UMET", site_description="Expense tracker.", private_paths=("/dashboard",))
+    llms = seo.llms_txt()
+    assert llms.startswith("# UMET\n\n> Expense tracker.")
+    assert ("- [Tracking Every Expense Without the Stress](https://site.example/tracking-every-expense): "
+            "Tracking every expense shows") in llms
+    assert "canonical: https://site.example/tracking-every-expense" in seo.llms_full_txt()
+    import json
+    feed = json.loads(seo.feed_json())
+    assert feed["version"] == "https://jsonfeed.org/version/1.1"
+    assert feed["items"][0]["url"] == "https://site.example/tracking-every-expense"
+    robots = seo.robots_txt()
+    assert "User-agent: GPTBot\nAllow: /\nDisallow: /dashboard" in robots
+    assert "User-agent: ClaudeBot" in robots and "User-agent: PerplexityBot" in robots
+    assert "Sitemap: https://site.example/sitemap.xml" in robots
+
+
+def test_fastapi_router_serves_ai_outputs():
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from tekjuice_connector.adapters.fastapi import create_seo_router
+
+    app = fastapi.FastAPI()
+    app.include_router(create_seo_router(_seo(_discovery_store()), prefix="/seo"))
+    client = TestClient(app)
+    md = client.get("/seo/markdown/tracking-every-expense")
+    assert md.status_code == 200 and md.headers["content-type"].startswith("text/markdown")
+    assert md.headers["link"] == '<https://site.example/tracking-every-expense>; rel="canonical"'
+    assert client.get("/seo/markdown/nope").status_code == 404
+    for path in ("llms.txt", "llms-full.txt", "robots.txt"):
+        assert client.get(f"/seo/{path}").headers["content-type"].startswith("text/plain")
+    assert client.get("/seo/feed.json").headers["content-type"].startswith("application/feed+json")

@@ -82,7 +82,7 @@ def test_registration_reflects_receiver_capabilities():
         "auth_scheme": "bearer",
         "receiver_secret": RECEIVER_SECRET,
         "contract_versions": ["1.0"],
-        "capabilities": ["publish.create", "publish.verify"],
+        "capabilities": ["publish.create", "publish.discovery", "publish.verify"],
         "framework": "flask",
     }
 

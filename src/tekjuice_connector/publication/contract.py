@@ -44,6 +44,7 @@ Responses are documented in ``docs/publication-contract.md``.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -67,6 +68,13 @@ CAPABILITY_VERIFY = "publish.verify"
 # Discoverability (tekjuice_connector.publication.seo)
 CAPABILITY_SEO_PRERENDER = "seo.prerender"
 CAPABILITY_SEO_SITEMAP = "seo.sitemap"
+# The receiver accepts ``content.discovery`` (GEO/AEO material, below).
+CAPABILITY_DISCOVERY = "publish.discovery"
+# Machine-readable outputs for AI systems (LEO): llms.txt, Markdown, feed.
+CAPABILITY_AI_LLMS_TXT = "ai.llms_txt"
+CAPABILITY_AI_MARKDOWN = "ai.markdown"
+CAPABILITY_AI_FEED = "ai.feed"
+CAPABILITY_AI_ROBOTS = "ai.robots"
 
 SLUG_MAX_LENGTH = 120
 _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -84,8 +92,15 @@ _PUBLISH_FIELDS = frozenset(
     }
 )
 _CONTENT_FIELDS = frozenset(
-    {"title", "body", "slug", "excerpt", "meta_description", "meta_keywords"}
+    {"title", "body", "slug", "excerpt", "meta_description", "meta_keywords", "discovery"}
 )
+# content.discovery: answer/generative-engine material computed by the Data
+# Engine. Optional; sent only to receivers advertising publish.discovery.
+_DISCOVERY_FIELDS = frozenset(
+    {"summary", "key_takeaways", "entities", "direct_answer", "faq", "citations",
+     "json_ld", "language"}
+)
+DISCOVERY_MAX_BYTES = 200_000
 _METADATA_FIELDS = frozenset(
     {"content_strategy_id", "opportunity_id", "content_hash"}
 )
@@ -104,6 +119,9 @@ class PublicationContent:
     excerpt: Optional[str] = None
     meta_description: Optional[str] = None
     meta_keywords: List[str] = field(default_factory=list)
+    # GEO/AEO material (summary, key_takeaways, entities, direct_answer, faq,
+    # citations, json_ld, language). Not part of the content hash.
+    discovery: Optional[Dict[str, Any]] = field(default=None, compare=False)
 
     def content_hash(self) -> str:
         """SHA-256 over the canonical content string (matches the Data Engine)."""
@@ -192,6 +210,55 @@ def check_contract_version(data: Dict[str, Any]) -> str:
     return str(version)
 
 
+def _str_list(value: Any, name: str) -> List[str]:
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ContractViolationError(f"'content.discovery.{name}' must be a list of strings")
+    return [v for v in value if v.strip()]
+
+
+def _parse_discovery(value: Any) -> Optional[Dict[str, Any]]:
+    """Validate ``content.discovery``; ``None`` when absent."""
+    if value is None:
+        return None
+    data = _require_object(value, "content.discovery")
+    _reject_unknown(data, _DISCOVERY_FIELDS, "content.discovery")
+    if len(json.dumps(data, ensure_ascii=False).encode("utf-8")) > DISCOVERY_MAX_BYTES:
+        raise ContractViolationError("'content.discovery' is too large")
+    out: Dict[str, Any] = {}
+    for key in ("summary", "direct_answer", "language"):
+        if key in data and data[key] is not None:
+            if not isinstance(data[key], str):
+                raise ContractViolationError(f"'content.discovery.{key}' must be a string")
+            out[key] = data[key]
+    for key in ("key_takeaways", "entities"):
+        if key in data:
+            out[key] = _str_list(data[key], key)
+    if "faq" in data:
+        faq = data["faq"]
+        if not isinstance(faq, list) or not all(
+            isinstance(i, dict) and isinstance(i.get("question"), str) and isinstance(i.get("answer"), str)
+            for i in faq
+        ):
+            raise ContractViolationError("'content.discovery.faq' must be a list of {question, answer}")
+        out["faq"] = [{"question": i["question"], "answer": i["answer"]} for i in faq]
+    if "citations" in data:
+        citations = data["citations"]
+        if not isinstance(citations, list) or not all(
+            isinstance(i, dict) and isinstance(i.get("url"), str) for i in citations
+        ):
+            raise ContractViolationError("'content.discovery.citations' must be a list of {url, title}")
+        out["citations"] = [
+            {"url": i["url"], "title": str(i.get("title") or "")}
+            for i in citations if i["url"].startswith(("https://", "http://"))
+        ]
+    if "json_ld" in data:
+        json_ld = data["json_ld"]
+        if not isinstance(json_ld, list) or not all(isinstance(i, dict) for i in json_ld):
+            raise ContractViolationError("'content.discovery.json_ld' must be a list of objects")
+        out["json_ld"] = json_ld
+    return out
+
+
 def parse_publish_request(data: Any) -> PublishRequest:
     """Validate a create/update request. Raises ContractViolationError."""
     data = _require_object(data, "request")
@@ -220,7 +287,10 @@ def parse_publish_request(data: Any) -> PublishRequest:
     ):
         raise ContractViolationError("'content.meta_keywords' must be a list of strings")
 
+    discovery = _parse_discovery(content_data.get("discovery"))
+
     content = PublicationContent(
+        discovery=discovery,
         title=_require_str(content_data, "title", "content"),
         body=_require_str(content_data, "body", "content"),
         slug=slug,

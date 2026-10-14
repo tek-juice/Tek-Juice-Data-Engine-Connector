@@ -222,7 +222,7 @@ def test_unsupported_capability_fails_clearly(call):
     assert store.get_content("moving-cost-guide").title == "Moving Cost Guide"
 
     status, body = call(receiver, verify_payload(), AUTH_HEADERS)
-    assert body["capabilities"] == ["publish.create", "publish.verify"]
+    assert body["capabilities"] == ["publish.create", "publish.discovery", "publish.verify"]
 
 
 def test_non_post_methods_are_rejected(call):
