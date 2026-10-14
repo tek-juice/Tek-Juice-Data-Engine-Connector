@@ -126,7 +126,9 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
                         headers={"Cache-Control": "public, max-age=900"})
 
     routes.append(("entity.json", entity, "entity"))
+    # HEAD as well as GET: crawlers and SEO tools check pages with HEAD, and
+    # a 405 there reads as an error (the server sends headers only).
     for path, handler, name in routes:
-        router.add_api_route(f"{prefix}/{path}", handler, methods=["GET"],
+        router.add_api_route(f"{prefix}/{path}", handler, methods=["GET", "HEAD"],
                              include_in_schema=False, name=f"tekjuice_seo_{name}")
     return router

@@ -105,6 +105,23 @@ def test_fastapi_router_serves_sitemap_and_pages():
     assert client.get("/seo/page/dashboard").status_code == 404
 
 
+def test_fastapi_router_answers_head_like_get():
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from tekjuice_connector.adapters.fastapi import create_seo_router
+
+    app = fastapi.FastAPI()
+    app.include_router(create_seo_router(_seo(_store()), prefix="/seo"))
+    client = TestClient(app)
+    head = client.head("/seo/page/tracking-every-expense")
+    assert head.status_code == 200 and head.content == b""
+    assert head.headers["content-type"].startswith("text/html")
+    assert 'rel="canonical"' in head.headers["link"]
+    assert client.head("/seo/sitemap.xml").status_code == 200
+    assert client.head("/seo/robots.txt").status_code == 200
+    assert client.head("/seo/page/dashboard").status_code == 404
+
+
 DISCOVERY = {
     "summary": "Tracking every expense shows where money goes and makes budgets realistic.",
     "key_takeaways": ["Log spending the day it happens", "Review categories weekly"],

@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-14
+
+### Fixed
+- The FastAPI SEO routes (pre-rendered pages, sitemap, robots.txt, llms.txt,
+  feed, Markdown copies, entity.json, IndexNow key) answer `HEAD` as well as
+  `GET`. They returned 405 to `HEAD`, which crawlers and SEO tools report as
+  an error.
+
 ## [0.5.0] — 2026-10-14
 
 ### Added
