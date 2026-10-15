@@ -9,6 +9,15 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-10-15
+
+### Added
+- `SeoPages(hub_path=..., hub_title=..., hub_description=...)`: the site's
+  article index (e.g. `/resources`) served server-rendered with its own
+  canonical, a `CollectionPage`/`ItemList` and a plain link to every
+  published article, so crawlers that do not run JavaScript can reach them.
+  Off unless configured.
+
 ## [0.5.1] — 2026-10-14
 
 ### Fixed

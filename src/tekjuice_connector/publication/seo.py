@@ -383,6 +383,59 @@ def render_page(
     return page
 
 
+def render_hub(
+    shell_html: str,
+    *,
+    hub_url: str,
+    title: str,
+    description: str,
+    items: Sequence[tuple],
+    site_name: Optional[str] = None,
+) -> str:
+    """The site's article index (e.g. /resources) as server-rendered HTML:
+    its own title, description and self-canonical, and a plain link to every
+    published article, so crawlers that do not run JavaScript can reach them.
+    ``items`` are (url, title, summary) tuples."""
+    t, d, u = html.escape(title), html.escape(description, quote=True), html.escape(hub_url, quote=True)
+    page = _PAGE_SPECIFIC_HEAD.sub("", shell_html)
+    page = re.sub(r'<script\s+type=["\']application/ld\+json["\'][^>]*>.*?</script>\s*', "", page,
+                  flags=re.I | re.S)
+    page = re.sub(r'<meta\s+name=["\']robots["\'][^>]*>\s*', "", page, flags=re.I)
+    if re.search(r"<title>.*?</title>", page, re.I | re.S):
+        page = re.sub(r"<title>.*?</title>", f"<title>{t}</title>", page, count=1, flags=re.I | re.S)
+    json_ld = {
+        "@context": "https://schema.org", "@type": "CollectionPage", "name": title, "url": hub_url,
+        "description": description,
+        "mainEntity": {"@type": "ItemList", "numberOfItems": len(items), "itemListElement": [
+            {"@type": "ListItem", "position": i + 1, "url": url, "name": name}
+            for i, (url, name, _) in enumerate(items)]},
+        **({"publisher": {"@type": "Organization", "name": site_name}} if site_name else {}),
+    }
+    head = "\n".join([
+        f'<meta name="description" content="{d}" />',
+        f'<link rel="canonical" href="{u}" />',
+        '<meta name="robots" content="index, follow" />',
+        '<meta property="og:type" content="website" />',
+        f'<meta property="og:title" content="{t}" />',
+        f'<meta property="og:description" content="{d}" />',
+        f'<meta property="og:url" content="{u}" />',
+        '<script type="application/ld+json">' + json.dumps(json_ld, ensure_ascii=False).replace("</", "<\\/")
+        + "</script>",
+    ])
+    page = page.replace("</head>", head + "\n</head>", 1) if "</head>" in page else head + page
+    entries = "".join(
+        f'<li><a href="{html.escape(url, quote=True)}">{html.escape(name)}</a>'
+        + (f"<p>{html.escape(summary)}</p>" if summary else "") + "</li>"
+        for url, name, summary in items)
+    body = f"<main><h1>{t}</h1>\n<p>{html.escape(description)}</p>\n<ul>{entries}</ul></main>"
+    root = re.search(r'(<div\s+id=["\']root["\'][^>]*>)(\s*)(</div>)', page, re.I)
+    if root:
+        return page[:root.end(1)] + body + page[root.start(3):]
+    if re.search(r"<body[^>]*>", page, re.I):
+        return re.sub(r"(<body[^>]*>)", r"\1" + body.replace("\\", "\\\\"), page, count=1, flags=re.I)
+    return page + body
+
+
 # ---------------------------------------------------------------------------
 # Machine-readable outputs for AI systems (LEO)
 # ---------------------------------------------------------------------------
@@ -478,6 +531,9 @@ class SeoPages:
     so styles and the app still load for visitors. ``static_paths`` are the
     site's own public pages to list in the sitemap ("/", "/features", ...);
     ``private_paths`` are app areas crawlers should not visit.
+    ``hub_path`` (e.g. "/resources"), when set, is served as a server-rendered
+    index of every published article with its own canonical; ``hub_title`` and
+    ``hub_description`` describe it.
     """
 
     def __init__(
@@ -490,6 +546,9 @@ class SeoPages:
         site_name: Optional[str] = None,
         site_description: Optional[str] = None,
         private_paths: Sequence[str] = (),
+        hub_path: Optional[str] = None,
+        hub_title: Optional[str] = None,
+        hub_description: Optional[str] = None,
     ) -> None:
         if not callable(getattr(store, "get_content", None)):
             raise TypeError("The content store must implement get_content(slug) to pre-render pages")
@@ -500,6 +559,9 @@ class SeoPages:
         self._site_name = site_name
         self._site_description = site_description
         self._private = tuple(private_paths)
+        self._hub = ("/" + hub_path.strip("/")) if hub_path and hub_path.strip("/") else None
+        self._hub_title = hub_title or "Articles"
+        self._hub_description = hub_description or ""
         self._indexnow_key: Optional[str] = None
 
     def set_indexnow_key(self, key: str) -> None:
@@ -576,6 +638,8 @@ class SeoPages:
         """Complete HTML for a published article, the site's own page with an
         approved metadata override, or ``None``."""
         slug = slug.strip("/")
+        if self._hub and "/" + slug == self._hub and not self._override(self._hub):
+            return self.hub()
         content = self._store.get_content(slug) if slug else None
         if content is None:
             path = "/" + slug if slug else "/"
@@ -590,6 +654,17 @@ class SeoPages:
             modified_time=self._modified(slug),
             entity=self.entity(),
         )
+
+    def hub(self) -> Optional[str]:
+        """The article index page at ``hub_path``, or None when not configured."""
+        if not self._hub:
+            return None
+        items = []
+        for page, content in self._articles():
+            summary = (content.discovery or {}).get("summary") or _description(content)
+            items.append((self.canonical_url(page.slug), content.title, (summary or "")[:220]))
+        return render_hub(self._shell(), hub_url=self._site + self._hub, title=self._hub_title,
+                          description=self._hub_description, items=items, site_name=self._site_name)
 
     def markdown(self, slug: str) -> Optional[str]:
         content = self._store.get_content(slug)

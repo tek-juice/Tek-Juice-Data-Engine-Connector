@@ -321,3 +321,37 @@ def test_software_products_get_software_application_and_verified_offer():
     assert offers_from_pricing(["$5", "€6"]) is None
     assert offers_from_pricing(["Basic $5/month", "Pro $12.50/month"]) == {
         "@type": "AggregateOffer", "lowPrice": "5", "highPrice": "12.5", "priceCurrency": "USD", "offerCount": 2}
+
+
+def _hub_seo(store):
+    return SeoPages(store, site_url="https://site.example", shell_html=lambda: SHELL,
+                    static_paths=("/", "/resources"), site_name="UMET", hub_path="/resources",
+                    hub_title="Insights for smarter personal finances",
+                    hub_description="Guides to tracking expenses and budgeting.")
+
+
+def test_hub_is_server_rendered_with_its_own_canonical_and_article_links():
+    page = _hub_seo(_store()).page("resources")
+    assert '<link rel="canonical" href="https://site.example/resources" />' in page
+    assert page.count('rel="canonical"') == 1
+    assert "<h1>Insights for smarter personal finances</h1>" in page
+    assert '<a href="https://site.example/tracking-every-expense">Tracking Every Expense Without the Stress</a>' in page
+    assert '"@type": "CollectionPage"' in page and '<meta name="robots" content="index, follow" />' in page
+    assert "<title>Insights for smarter personal finances</title>" in page
+    # Off unless configured; other paths unaffected.
+    assert _seo(_store()).page("resources") is None
+    assert _hub_seo(_store()).page("tracking-every-expense").count('rel="canonical"') == 1
+
+
+def test_hub_route_answers_get_and_head():
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+    from tekjuice_connector.adapters.fastapi import create_seo_router
+
+    app = fastapi.FastAPI()
+    app.include_router(create_seo_router(_hub_seo(_store()), prefix="/seo"))
+    client = TestClient(app)
+    response = client.get("/seo/page/resources")
+    assert response.status_code == 200 and "tracking-every-expense" in response.text
+    assert 'rel="canonical"' in response.headers["link"] and "/resources" in response.headers["link"]
+    assert client.head("/seo/page/resources").status_code == 200
