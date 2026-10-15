@@ -16,7 +16,15 @@ Request (contract 1.0, ``action: "site_change"``)::
                 "canonical": "https://example.com/resources", "robots": "index,follow"}}
 
     {"change": {"type": "redirect", "path": "/old", "target": "/new", "status_code": 301}}
-    {"change": {"type": "remove", "path": "/old", "remove": "redirect" | "meta" | "all"}}
+    {"change": {"type": "remove", "path": "/old", "remove": "redirect" | "meta" | "sitemap" | "all"}}
+
+With ``site.changes.sitemap`` (sitemaps served by ``SeoPages``)::
+
+    {"change": {"type": "sitemap", "path": "/pricing", "sitemap": "include" | "exclude"}}
+
+``include`` lists one of the site's own pages in the sitemap, ``exclude``
+leaves a page out. No lastmod is invented for included pages: only real
+modification dates are reported.
 
 Rules: paths are absolute site paths; canonical URLs and redirect targets
 stay on the site; redirects may not loop or chain (the target may not itself
@@ -35,14 +43,16 @@ from tekjuice_connector.publication.errors import ContractViolationError
 
 ACTION_SITE_CHANGE = "site_change"
 CAPABILITY_SITE_CHANGES = "site.changes"
-CHANGE_TYPES = ("page_meta", "redirect", "remove")
+CAPABILITY_SITE_CHANGES_SITEMAP = "site.changes.sitemap"
+CHANGE_TYPES = ("page_meta", "redirect", "remove", "sitemap")
+SITEMAP_VALUES = ("include", "exclude")
 ROBOTS_VALUES = ("index,follow", "noindex,follow", "index,nofollow", "noindex,nofollow")
 REDIRECT_CODES = (301, 302, 307, 308)
 MAX_PATH = 300
 _PATH = re.compile(r"^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*$")
 _REQUEST_FIELDS = frozenset({"contract_version", "action", "website_id", "idempotency_key", "change"})
 _CHANGE_FIELDS = frozenset({"type", "path", "title", "meta_description", "canonical", "robots", "target",
-                            "status_code", "remove"})
+                            "status_code", "remove", "sitemap"})
 
 
 @dataclass(frozen=True)
@@ -113,10 +123,15 @@ def parse_site_change(data: Dict[str, Any], *, base_url: str) -> SiteChangeReque
         if code not in REDIRECT_CODES:
             raise ContractViolationError(f"'change.status_code' must be one of {REDIRECT_CODES}")
         out["redirect"] = {"target": target, "status_code": code}
+    elif kind == "sitemap":
+        value = change.get("sitemap")
+        if value not in SITEMAP_VALUES:
+            raise ContractViolationError("'change.sitemap' must be include or exclude")
+        out["sitemap"] = value
     else:
         remove = change.get("remove", "all")
-        if remove not in ("meta", "redirect", "all"):
-            raise ContractViolationError("'change.remove' must be meta, redirect or all")
+        if remove not in ("meta", "redirect", "sitemap", "all"):
+            raise ContractViolationError("'change.remove' must be meta, redirect, sitemap or all")
         out["remove"] = remove
     return SiteChangeRequest(idempotency_key=key, change=out)
 
@@ -129,8 +144,11 @@ def apply_site_change(store: Any, request: SiteChangeRequest) -> Dict[str, Any]:
     if previous and previous.get("idempotency_key") == request.idempotency_key:
         return {"status": "applied", "replayed": True, "path": path,
                 "previous": previous.get("previous_state"), "current": _public(previous)}
-    current: Dict[str, Any] = {"meta": (previous or {}).get("meta"), "redirect": (previous or {}).get("redirect")}
-    if change["type"] == "page_meta":
+    current: Dict[str, Any] = {"meta": (previous or {}).get("meta"), "redirect": (previous or {}).get("redirect"),
+                               "sitemap": (previous or {}).get("sitemap")}
+    if change["type"] == "sitemap":
+        current["sitemap"] = change["sitemap"]
+    elif change["type"] == "page_meta":
         current["meta"] = {**(current["meta"] or {}), **change["meta"]}
     elif change["type"] == "redirect":
         target = change["redirect"]["target"]
@@ -146,8 +164,10 @@ def apply_site_change(store: Any, request: SiteChangeRequest) -> Dict[str, Any]:
             current["meta"] = None
         if change["remove"] in ("redirect", "all"):
             current["redirect"] = None
+        if change["remove"] in ("sitemap", "all"):
+            current["sitemap"] = None
     stored = {**current, "idempotency_key": request.idempotency_key, "previous_state": _public(previous)}
-    if not current["meta"] and not current["redirect"]:
+    if not current["meta"] and not current["redirect"] and not current["sitemap"]:
         store.delete_site_override(path)
     else:
         store.set_site_override(path, stored)
@@ -158,7 +178,8 @@ def apply_site_change(store: Any, request: SiteChangeRequest) -> Dict[str, Any]:
 def _public(override: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     if not override:
         return None
-    return {"meta": override.get("meta"), "redirect": override.get("redirect")}
+    return {"meta": override.get("meta"), "redirect": override.get("redirect"),
+            "sitemap": override.get("sitemap")}
 
 
 def store_supports_site_changes(store: Any) -> bool:

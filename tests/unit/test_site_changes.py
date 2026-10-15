@@ -95,3 +95,31 @@ def test_router_serves_redirects_and_overridden_pages():
     home = client.get("/seo/page/")
     assert home.status_code == 200 and "<title>Home</title>" in home.text
     assert client.get("/seo/page/nested/unknown").status_code == 404
+
+
+def test_sitemap_changes_include_and_exclude_pages_and_are_reversible(tmp_path):
+    for store in (None, SQLiteContentStore(str(tmp_path / "s.db"), "https://site.example")):
+        store, seo, receiver = _setup(store)
+        assert "site.changes.sitemap" in receiver.capabilities
+        assert "https://site.example/pricing" not in seo.sitemap()
+        ok = _send(receiver, {"type": "sitemap", "path": "/pricing", "sitemap": "include"})
+        assert ok.status_code == 200, ok.body
+        xml = seo.sitemap()
+        entry = xml.split("https://site.example/pricing")[1].split("</url>")[0]
+        assert "<lastmod>" not in entry               # no invented modification date
+        assert _send(receiver, {"type": "sitemap", "path": "/old-guide", "sitemap": "exclude"},
+                     key="change-key-2").status_code == 200
+        assert "https://site.example/old-guide" not in seo.sitemap()
+        removed = _send(receiver, {"type": "remove", "path": "/pricing", "remove": "sitemap"}, key="change-key-3")
+        assert removed.body["previous"]["sitemap"] == "include"
+        assert "https://site.example/pricing" not in seo.sitemap()
+
+
+def test_sitemap_change_needs_the_sitemap_capability():
+    store = InMemoryContentStore("https://site.example")
+    plain = PublicationReceiver(store=store, website_id="w", receiver_secret=SECRET)
+    assert "site.changes.sitemap" not in plain.capabilities
+    with pytest.raises(ContractViolationError):
+        parse_site_change({"idempotency_key": "k" * 10, "change": {"type": "sitemap", "path": "/x",
+                                                                    "sitemap": "maybe"}},
+                          base_url="https://site.example")

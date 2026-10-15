@@ -35,6 +35,7 @@ from typing import Any, Dict, Mapping, Optional, Union
 from tekjuice_connector.publication.site_changes import (
     ACTION_SITE_CHANGE,
     CAPABILITY_SITE_CHANGES,
+    CAPABILITY_SITE_CHANGES_SITEMAP,
     apply_site_change,
     parse_site_change,
     store_supports_site_changes,
@@ -163,6 +164,10 @@ class PublicationReceiver:
                 capabilities.add(CAPABILITY_AI_INDEXNOW)
             if callable(getattr(store, "list_published", None)):
                 capabilities.add(CAPABILITY_SEO_SITEMAP)
+            # Sitemap inclusion/exclusion changes need both: overrides in the
+            # store and a sitemap served by SeoPages.
+            if CAPABILITY_SITE_CHANGES in capabilities and CAPABILITY_SEO_SITEMAP in capabilities:
+                capabilities.add(CAPABILITY_SITE_CHANGES_SITEMAP)
         self.capabilities = frozenset(capabilities)
 
     # ------------------------------------------------------------------
@@ -246,6 +251,8 @@ class PublicationReceiver:
         self._require(CAPABILITY_SITE_CHANGES, ACTION_SITE_CHANGE)
         base = self._store.public_url("").rstrip("/")
         request = parse_site_change(data, base_url=base)
+        if request.change["type"] == "sitemap":
+            self._require(CAPABILITY_SITE_CHANGES_SITEMAP, ACTION_SITE_CHANGE)
         body = apply_site_change(self._store, request)
         return ReceiverResponse(200, {**body, "contract_version": CONTRACT_VERSION, "website_id": self._website_id,
                                       "idempotency_key": request.idempotency_key})

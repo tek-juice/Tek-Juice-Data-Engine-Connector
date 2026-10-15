@@ -677,13 +677,22 @@ class SeoPages:
         def listed(path: str) -> bool:
             override = self._override(path.rstrip("/") or "/") or {}
             robots = (override.get("meta") or {}).get("robots") or ""
-            return not override.get("redirect") and "noindex" not in robots
+            return (not override.get("redirect") and "noindex" not in robots
+                    and override.get("sitemap") != "exclude")
 
         entries: List[Tuple[str, Optional[datetime]]] = [
             (self._site + (path if path.startswith("/") else "/" + path), None)
             for path in self._static if listed(path if path.startswith("/") else "/" + path)
         ]
         entries += [(self.canonical_url(p.slug), p.updated_at) for p in self._published() if listed("/" + p.slug)]
+        # Approved inclusions (site.changes.sitemap): the site's own pages,
+        # without an invented lastmod.
+        known = {url for url, _ in entries}
+        lister = getattr(self._store, "list_site_overrides", None)
+        for path, override in sorted((lister() if callable(lister) else {}).items()):
+            url = self._site + path
+            if (override or {}).get("sitemap") == "include" and url not in known and listed(path):
+                entries.append((url, None))
         return build_sitemap(entries)
 
     def _articles(self) -> List[Tuple[PublishedPage, PublicationContent]]:
