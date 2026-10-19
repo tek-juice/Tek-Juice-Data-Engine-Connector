@@ -36,7 +36,6 @@ It retries in the background until ready. Nothing is published during setup.
 Docker (recommended):
 
 ```bash
-docker build -t tekjuice-connector:0.7.0 .     # from this repository
 docker run -d --name tekjuice-connector --restart unless-stopped \
   -v tekjuice-data:/var/lib/tekjuice \
   -e TEKJUICE_WEBSITE_ID=... \
@@ -45,8 +44,12 @@ docker run -d --name tekjuice-connector --restart unless-stopped \
   -e TEKJUICE_API_BASE_URL=https://api.example.com \
   -e TEKJUICE_CONTENT_API_URL=http://backend:3000/tekjuice \
   -e TEKJUICE_CONTENT_API_TOKEN_FILE=/run/secrets/tekjuice_content_api_token \
-  tekjuice-connector:0.7.0
+  ghcr.io/tek-juice/tekjuice-connector:0.7.0
 ```
+
+The image is published for linux/amd64 and linux/arm64 with every release
+(`ghcr.io/tek-juice/tekjuice-connector:<version>` and `:latest`); to build it
+yourself: `docker build -t tekjuice-connector .` in this repository.
 
 A complete Compose file is in `examples/sidecar/docker-compose.yml`. Without
 Docker, run `pipx install tekjuice-connector` and then `tekjuice serve`

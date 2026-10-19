@@ -1,13 +1,13 @@
 # tekjuice-connector sidecar: S2S publication for a backend in any language.
 #
-#   docker build -t tekjuice-connector:0.7.0 .
+#   docker build -t tekjuice-connector .        (published: ghcr.io/tek-juice/tekjuice-connector)
 #   docker run -d --name tekjuice-connector \
 #     -v tekjuice-data:/var/lib/tekjuice \
 #     -e TEKJUICE_WEBSITE_ID=... -e TEKJUICE_CONNECTOR_KEY_FILE=/run/secrets/tekjuice_connector_key \
 #     -e TEKJUICE_DATA_ENGINE_URL=https://... -e TEKJUICE_API_BASE_URL=https://api.example.com \
 #     -e TEKJUICE_CONTENT_API_URL=http://backend:3000/tekjuice \
 #     -e TEKJUICE_CONTENT_API_TOKEN_FILE=/run/secrets/tekjuice_content_api_token \
-#     tekjuice-connector:0.7.0
+#     ghcr.io/tek-juice/tekjuice-connector:0.7.0
 #
 # The receiver secret is generated on first start and kept in the
 # /var/lib/tekjuice volume; nothing secret is baked into the image.

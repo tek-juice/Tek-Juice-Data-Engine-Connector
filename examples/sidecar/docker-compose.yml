@@ -21,7 +21,7 @@ services:
     secrets: [tekjuice_content_api_token]
 
   tekjuice-connector:
-    image: tekjuice-connector:0.7.0
+    image: ghcr.io/tek-juice/tekjuice-connector:0.7.0
     restart: unless-stopped
     ports: ["127.0.0.1:8787:8787"]   # local readiness checks only; Caddy serves the public side
     volumes: ["tekjuice-data:/var/lib/tekjuice"]   # receiver secret + ledger (named volume: survives recreation)

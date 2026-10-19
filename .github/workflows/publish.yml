@@ -3,6 +3,9 @@ name: Publish Python Package
 on:
   release:
     types: [published]
+  # Pushing a version tag (git push origin vX.Y.Z) publishes as well.
+  push:
+    tags: ["v*.*.*"]
   workflow_dispatch:
 
 jobs:
@@ -51,3 +54,6 @@ jobs:
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A release created later for an already-published tag is a no-op.
+          skip-existing: true
