@@ -51,6 +51,13 @@ The response adds, to the 0.1.0 fields, `publication_status`
 `publication_ready` and `next_action`. `ready` is `true` only when onboarding
 is `READY` **and** the publication connection has been verified.
 
+Data Engines that support connector setup also return registration
+evidence, never a secret: `publication_endpoint_url` (the endpoint stored),
+`receiver_secret_fingerprint` (`sha256(b"tekjuice-receiver-secret:v1:" +
+secret).hexdigest()[:16]`) and `publication_failure_reason` (the last
+verification failure, e.g. `auth_failed`, `unreachable`). Older Data Engines
+omit them; clients must treat them as optional. See [setup.md](setup.md).
+
 Registration alone never enables publishing. The Data Engine then verifies
 the connection (below) and activates it only if verification succeeds.
 Re-sending an identical registration is a no-op; a changed endpoint, secret

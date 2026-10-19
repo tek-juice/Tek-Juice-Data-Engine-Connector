@@ -33,7 +33,8 @@ pytest --cov=tekjuice_connector --cov-report=term-missing
 - No bare `except:` clauses.
 - No circular imports.
 - No framework imports (Django, FastAPI, Flask, etc.) in the package source.
-- No M2M logic.
+- No M2M logic: publication is S2S only (`m2m_http` is a retired, historical
+  integration type on the Data Engine).
 - No database access.
 - Secrets must never appear in `repr()`, logs, exceptions, or diagnostic output.
 
@@ -43,7 +44,8 @@ Do not violate these:
 
 1. The Connector is a **standalone Python package** — no framework dependencies.
 2. It communicates with the Data Engine via **HTTP only** — no database connections.
-3. **M2M authentication is separate** — do not implement or reference it.
+3. **Publication is S2S** — the receiver secret authenticates the Data Engine's
+   S2S requests; never reuse the connector key for it, and do not reintroduce M2M.
 4. The connector key must never be logged, printed, or included in exceptions.
 5. Retries must be **bounded** — never create infinite retry loops.
 6. All public functions must have type hints.

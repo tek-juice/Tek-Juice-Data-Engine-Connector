@@ -33,7 +33,8 @@ Vulnerabilities in scope include:
 ## Out of scope
 
 - Vulnerabilities in the Tek Juice Data Engine itself (report to Tek Juice directly).
-- M2M authentication (not implemented in this package).
+- The retired M2M publication transport (the Data Engine publishes only over S2S;
+  historical `m2m_http` records exist on the Data Engine for audit only).
 - Issues in development tooling (`pytest`, etc.).
 
 ## Security design

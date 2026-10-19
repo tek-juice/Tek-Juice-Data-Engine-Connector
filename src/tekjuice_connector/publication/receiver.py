@@ -29,8 +29,10 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import threading
+import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Mapping, Optional, Union
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from tekjuice_connector.publication.site_changes import (
     ACTION_SITE_CHANGE,
@@ -81,6 +83,7 @@ from tekjuice_connector.security.secrets import SecretStr
 _log = logging.getLogger(__name__)
 
 MIN_RECEIVER_SECRET_LENGTH = 32
+SECRET_RELOAD_INTERVAL_SECONDS = 5.0
 DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024
 
 
@@ -114,6 +117,14 @@ class PublicationReceiver:
         through the connector handshake. At least 32 characters.
     max_body_bytes:
         Requests larger than this are rejected with 413.
+    secret_store:
+        Instead of ``receiver_secret``: a
+        :class:`~tekjuice_connector.setup.SecretStore` the connector's setup
+        writes. The receiver accepts its active secret and, during a
+        rotation, the pending one; it reloads the store (at most every few
+        seconds) when a presented credential does not match, so every worker
+        process follows a rotation. Until setup has stored a secret every
+        request is rejected with 401.
     """
 
     def __init__(
@@ -121,16 +132,21 @@ class PublicationReceiver:
         *,
         store: object,
         website_id: str,
-        receiver_secret: Union[str, SecretStr],
+        receiver_secret: Union[str, SecretStr, None] = None,
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
         seo: object = None,
+        secret_store: object = None,
     ) -> None:
         secret = (
             receiver_secret.reveal()
             if isinstance(receiver_secret, SecretStr)
             else str(receiver_secret or "")
         )
-        if len(secret) < MIN_RECEIVER_SECRET_LENGTH:
+        if secret_store is None and len(secret) < MIN_RECEIVER_SECRET_LENGTH:
+            raise ValueError(
+                f"receiver_secret must be at least {MIN_RECEIVER_SECRET_LENGTH} characters"
+            )
+        if secret and len(secret) < MIN_RECEIVER_SECRET_LENGTH:
             raise ValueError(
                 f"receiver_secret must be at least {MIN_RECEIVER_SECRET_LENGTH} characters"
             )
@@ -144,7 +160,13 @@ class PublicationReceiver:
 
         self._store = store
         self._website_id = str(website_id)
-        self._secret = SecretStr(secret)
+        self._secret_store = secret_store
+        self._seo = seo
+        self._lock = threading.Lock()
+        self._accepted: Tuple[SecretStr, ...] = (SecretStr(secret),) if secret else ()
+        self._loaded_at = 0.0
+        if not self._accepted and secret_store is not None:
+            self._reload_secrets(force=True)
         self._max_body_bytes = max_body_bytes
         capabilities = set(store_capabilities(store)) | {CAPABILITY_DISCOVERY}
         # Discoverability is advertised only when the site actually serves
@@ -158,9 +180,7 @@ class PublicationReceiver:
             if store_supports_site_changes(store):
                 capabilities.add(CAPABILITY_SITE_CHANGES)
             if callable(getattr(seo, "set_indexnow_key", None)):
-                from tekjuice_connector.publication.seo import indexnow_key
-
-                seo.set_indexnow_key(indexnow_key(secret))
+                self._update_indexnow_key()
                 capabilities.add(CAPABILITY_AI_INDEXNOW)
             if callable(getattr(store, "list_published", None)):
                 capabilities.add(CAPABILITY_SEO_SITEMAP)
@@ -180,7 +200,70 @@ class PublicationReceiver:
 
     @property
     def receiver_secret(self) -> SecretStr:
-        return self._secret
+        """The active secret (what the Data Engine should hold)."""
+        with self._lock:
+            if not self._accepted:
+                raise ValueError("The receiver has no secret yet; run the connector setup")
+            return self._accepted[0]
+
+    @property
+    def has_secret(self) -> bool:
+        with self._lock:
+            return bool(self._accepted)
+
+    def set_receiver_secrets(self, active: Union[str, SecretStr],
+                             *others: Union[str, SecretStr, None]) -> None:
+        """Accept *active* (and, during a rotation, the other secrets).
+
+        Used by the connector's setup; the active secret also derives the
+        IndexNow key, which the Data Engine derives from the secret it holds.
+        """
+        values = []
+        for value in (active, *others):
+            if value is None:
+                continue
+            raw = value.reveal() if isinstance(value, SecretStr) else str(value)
+            if len(raw) < MIN_RECEIVER_SECRET_LENGTH:
+                raise ValueError(
+                    f"receiver_secret must be at least {MIN_RECEIVER_SECRET_LENGTH} characters"
+                )
+            if all(raw != v.reveal() for v in values):
+                values.append(SecretStr(raw))
+        with self._lock:
+            self._accepted = tuple(values)
+        self._update_indexnow_key()
+
+    def _reload_secrets(self, *, force: bool = False) -> bool:
+        """Reload accepted secrets from the secret store (rate limited)."""
+        if self._secret_store is None:
+            return False
+        now = time.monotonic()
+        if not force and now - self._loaded_at < SECRET_RELOAD_INTERVAL_SECONDS:
+            return False
+        self._loaded_at = now
+        try:
+            loaded = self._secret_store.load()
+        except Exception:  # noqa: BLE001 - an unreadable store keeps the current secrets
+            _log.warning("Receiver secret store could not be read")
+            return False
+        if loaded is None or (loaded.active is None and loaded.pending is None):
+            return False
+        if loaded.active is None:
+            loaded = type(loaded)(active=loaded.pending, pending=None, endpoint_url=loaded.endpoint_url)
+        before = self._accepted
+        self.set_receiver_secrets(loaded.active, loaded.pending)
+        return self._accepted != before
+
+    def _update_indexnow_key(self) -> None:
+        seo = self._seo
+        if seo is None or not callable(getattr(seo, "set_indexnow_key", None)):
+            return
+        with self._lock:
+            active = self._accepted[0].reveal() if self._accepted else None
+        if active:
+            from tekjuice_connector.publication.seo import indexnow_key
+
+            seo.set_indexnow_key(indexnow_key(active))
 
     @property
     def max_body_bytes(self) -> int:
@@ -262,10 +345,25 @@ class PublicationReceiver:
         scheme, _, token = authorization.partition(" ")
         if scheme.lower() != "bearer" or not token:
             raise ReceiverAuthenticationError("Missing bearer authorization")
-        if not hmac.compare_digest(
-            token.strip().encode("utf-8"), self._secret.reveal().encode("utf-8")
-        ):
-            raise ReceiverAuthenticationError("Invalid receiver credential")
+        presented = token.strip().encode("utf-8")
+        # Follow the store (rate limited): a retired secret must stop working
+        # after a rotation completes in another process.
+        self._reload_secrets()
+        if self._matches(presented):
+            return
+        # Another process (or the setup) may have rotated the secret.
+        if self._reload_secrets() and self._matches(presented):
+            return
+        raise ReceiverAuthenticationError("Invalid receiver credential")
+
+    def _matches(self, presented: bytes) -> bool:
+        with self._lock:
+            accepted = self._accepted
+        # Compare against every accepted secret (no early exit).
+        matched = False
+        for secret in accepted:
+            matched |= hmac.compare_digest(presented, secret.reveal().encode("utf-8"))
+        return matched
 
     def _require(self, capability: str, action: str) -> None:
         if capability not in self.capabilities:

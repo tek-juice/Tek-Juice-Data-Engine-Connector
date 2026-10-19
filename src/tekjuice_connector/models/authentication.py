@@ -51,6 +51,13 @@ class HandshakeResponse:
     publication_status: Optional[str] = None
     publication_ready: Optional[bool] = None
     next_action: Optional[str] = None
+    # Registration evidence (Data Engine >= the connector-setup release):
+    # the endpoint it will call, a fingerprint of the receiver secret it
+    # holds (see tekjuice_connector.setup.receiver_secret_fingerprint) and
+    # why the last verification failed. None against older Data Engines.
+    publication_endpoint_url: Optional[str] = None
+    receiver_secret_fingerprint: Optional[str] = None
+    publication_failure_reason: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "HandshakeResponse":
@@ -69,4 +76,7 @@ class HandshakeResponse:
             publication_status=data.get("publication_status"),
             publication_ready=data.get("publication_ready"),
             next_action=data.get("next_action"),
+            publication_endpoint_url=data.get("publication_endpoint_url"),
+            receiver_secret_fingerprint=data.get("receiver_secret_fingerprint"),
+            publication_failure_reason=data.get("publication_failure_reason"),
         )

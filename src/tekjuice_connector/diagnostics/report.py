@@ -31,6 +31,15 @@ class DiagnosticReport:
 
     config: ConfigDiagnosticResult
     connectivity: Optional[ConnectivityCheckResult] = None
+    # The last TekJuiceConnector.setup() result (secret-free), if any.
+    setup: Optional[object] = None
+
+    @property
+    def setup_code(self) -> Optional[str]:
+        """The setup's diagnostic code (e.g. ``integration_ready``,
+        ``api_host_not_discoverable``), or None when setup has not run."""
+        code = getattr(self.setup, "code", None)
+        return getattr(code, "value", None)
 
     @property
     def overall_ok(self) -> bool:
@@ -65,6 +74,14 @@ class DiagnosticReport:
             lines.append("Connectivity diagnostic: not performed.")
 
         lines.append("")
+
+        if self.setup is not None:
+            lines.append(f"S2S setup: {self.setup_code}")
+            for stage in getattr(self.setup, "stages", []):
+                lines.append(f"  [{stage.status}] {stage.stage.value}: {stage.detail}")
+                if stage.remediation and stage.status != "passed":
+                    lines.append(f"      next: {stage.remediation}")
+            lines.append("")
 
         # Overall verdict
         verdict = "READY" if self.overall_ok else "NOT READY"

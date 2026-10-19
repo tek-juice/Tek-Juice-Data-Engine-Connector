@@ -38,4 +38,6 @@ def create_view(receiver: PublicationReceiver):
             content_type="application/json",
         )
 
+    # Lets the connector's setup find the mounted route in the URLconf.
+    receive_publication.tekjuice_receiver = receiver
     return receive_publication

@@ -85,6 +85,46 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Validate configuration only; skip live connectivity check.",
     )
 
+    # serve (sidecar)
+    subparsers.add_parser(
+        "serve",
+        help="Run the connector sidecar (S2S receiver for a backend in any language; env configuration).",
+    )
+
+    proxy_p = subparsers.add_parser(
+        "proxy-config",
+        help="Print nginx or Caddy configuration for the sidecar (from its environment configuration).",
+    )
+    flavour = proxy_p.add_mutually_exclusive_group()
+    flavour.add_argument("--nginx", dest="flavour", action="store_const", const="nginx", default="nginx")
+    flavour.add_argument("--caddy", dest="flavour", action="store_const", const="caddy")
+    proxy_p.add_argument("--upstream", default="http://127.0.0.1:8787", help="Where the sidecar listens.")
+    proxy_p.add_argument("--site-upstream", default="http://127.0.0.1:3000", help="Where your website is served.")
+    proxy_p.add_argument("--template", help="Public URL template of articles (default: TEKJUICE_PUBLIC_URL_TEMPLATE).")
+
+    subparsers.add_parser(
+        "check-content-api",
+        help="Non-mutating conformance checks of the backend's content API (sidecar configuration).",
+    )
+
+    # setup
+    setup_p = subparsers.add_parser(
+        "setup",
+        help="Set up S2S publication: receiver secret, endpoint URL, registration, verification.",
+    )
+    store = setup_p.add_mutually_exclusive_group()
+    store.add_argument("--env-file", help="Dotenv file the deployment loads (secret written there, mode 0600).")
+    store.add_argument("--secret-file", help="JSON secret file on a persistent volume.")
+    setup_p.add_argument("--api-base-url", help="Public https base URL of the backend API "
+                                                "(default: TEKJUICE_API_BASE_URL).")
+    setup_p.add_argument("--route-path", help="Path the running backend serves the receiver on.")
+    setup_p.add_argument("--public-content-url", help="https URL template with {slug} serving published content.")
+    setup_p.add_argument("--rotate", action="store_true", help="Rotate the receiver secret (coordinated).")
+    setup_p.add_argument("--rollback-rotation", action="store_true", help="Abandon a pending rotation.")
+    setup_p.add_argument("--allow-endpoint-change", action="store_true",
+                         help="Allow moving a verified registration to a different endpoint URL.")
+    setup_p.add_argument("--json", action="store_true", help="Print the secret-free result as JSON.")
+
     return parser
 
 
@@ -118,6 +158,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "diagnostics":
         from tekjuice_connector.cli.diagnostics import run_diagnostics
         return run_diagnostics(config_only=getattr(args, "config_only", False))
+
+    if args.command == "proxy-config":
+        from tekjuice_connector.cli.proxy_config import run_proxy_config
+        return run_proxy_config(flavour=args.flavour, upstream=args.upstream, site_upstream=args.site_upstream,
+                                template=args.template)
+
+    if args.command == "check-content-api":
+        from tekjuice_connector.cli.check_content_api import run_check_content_api
+        return run_check_content_api()
+
+    if args.command == "serve":
+        from tekjuice_connector.cli.serve import run_serve
+        return run_serve()
+
+    if args.command == "setup":
+        from tekjuice_connector.cli.setup import run_setup
+        return run_setup(
+            env_file=args.env_file, secret_file=args.secret_file, api_base_url=args.api_base_url,
+            route_path=args.route_path, public_content_url=args.public_content_url, rotate=args.rotate,
+            rollback_rotation=args.rollback_rotation, allow_endpoint_change=args.allow_endpoint_change,
+            as_json=args.json,
+        )
 
     parser.print_help()
     return 0

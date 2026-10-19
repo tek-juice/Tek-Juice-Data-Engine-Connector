@@ -9,6 +9,64 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-19
+
+### Added
+- `TekJuiceConnector.setup()` and `tekjuice setup`: connector-owned S2S setup.
+  It generates the receiver secret on the customer server
+  (`secrets.token_urlsafe(48)`, only when none is stored), persists it,
+  establishes `TEKJUICE_PUBLICATION_ENDPOINT_URL` from the configured API base
+  URL and the receiver route (mounting the route on FastAPI/Starlette/Flask;
+  finding it in Django's URLconf), proves the public endpoint accepts the
+  secret with a dry-run `verify`, registers through the existing handshake,
+  confirms the Data Engine stored the same endpoint and secret fingerprint,
+  waits for the Data Engine's verification and reports readiness per stage
+  (`SetupResult`, `SetupCode`). Publishes nothing; idempotent.
+- Secret stores: `EnvFileSecretStore` (atomic, 0600, refuses git-tracked or
+  un-ignored files), `FileSecretStore`, read-only `EnvironmentSecretStore`.
+  Inside containers, writable stores refuse the container's own filesystem.
+  Custom stores implement `SecretStore`.
+- Coordinated rotation (`rotate=True`): a pending secret is accepted beside the
+  active one and replaces it only after the Data Engine verifies it; retries
+  reuse it; `rollback_rotation=True` abandons it.
+- `PublicationReceiver(secret_store=...)`: accepts the stored active (and
+  pending) secret and reloads the store when a credential does not match, so
+  every worker follows the setup and rotations; `set_receiver_secrets()`.
+- Optional handshake response fields `publication_endpoint_url`,
+  `receiver_secret_fingerprint`, `publication_failure_reason` (Data Engine
+  connector-setup release), exposed on `ConnectionResult`.
+- Diagnostics include the last setup's stages.
+- **Sidecar for any language** (`tekjuice serve`, `Dockerfile`): the connector as
+  its own service. It is the S2S receiver, runs the setup in the background,
+  serves `/healthz` and `/readyz`, keeps the idempotency ledger, and hands
+  content to the backend's content API (`HttpContentStore`;
+  `docs/content-api.openapi.yaml`). Reference content APIs in Node.js, PHP and
+  Go (`examples/sidecar/`), tested end to end; `tekjuice check-content-api`
+  runs non-mutating conformance checks.
+- Sidecar HTTPS (`TEKJUICE_TLS_CERT_FILE` / `TEKJUICE_TLS_KEY_FILE`, renewed
+  certificates reloaded without a restart) and `tekjuice proxy-config
+  --nginx|--caddy`, generating proxy configuration from the sidecar's settings.
+  Website routes fall back to the site on 404. Both outputs are tested against
+  real nginx and Caddy.
+- Discoverability and site changes for any language (`TEKJUICE_SITE_URL`):
+  pre-rendered articles, sitemap, robots.txt, llms.txt, feed, Markdown,
+  entity, IndexNow key, metadata overrides and redirects, served by the
+  sidecar from its copy of the published content (`/tekjuice/seo/site/<path>`
+  maps website paths).
+- Framework reference content APIs, tested end to end: Express, Laravel, Ruby
+  on Rails, Spring Boot, ASP.NET Core (`examples/sidecar/frameworks/`).
+
+### Compatibility
+- `PublicationReceiver(receiver_secret=...)`, `PublicationRegistration`,
+  `connect()`, `status()`, `diagnostics()` and the handshake contract are
+  unchanged; older Data Engines without the new response fields still work.
+
+## [0.6.0] — 2026-10-15
+
+### Added
+- Sitemap inclusion/exclusion site changes (`site.changes.sitemap`): approved
+  overrides in the content store, applied to the sitemap `SeoPages` serves.
+
 ## [0.5.2] — 2026-10-15
 
 ### Added

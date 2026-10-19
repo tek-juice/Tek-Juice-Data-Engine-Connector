@@ -39,9 +39,11 @@ class Diagnostician:
         self,
         settings: ConnectorSettings,
         manager: Optional[ConnectionManager] = None,
+        setup: object = None,
     ) -> None:
         self._settings = settings
         self._manager = manager
+        self._setup = setup
 
     def run(self) -> DiagnosticReport:
         """Execute all checks and return a :class:`DiagnosticReport`."""
@@ -60,6 +62,7 @@ class Diagnostician:
         return DiagnosticReport(
             config=config_result,
             connectivity=connectivity_result,
+            setup=self._setup,
         )
 
     @classmethod

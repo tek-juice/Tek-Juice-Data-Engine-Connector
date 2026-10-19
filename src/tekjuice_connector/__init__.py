@@ -159,6 +159,8 @@ class TekJuiceConnector:
         )
 
         effective_policy = retry_policy or RetryPolicy(max_attempts=max_retries)
+        self._retry_policy = effective_policy
+        self._last_setup = None
 
         self._manager: ConnectionManager = ConnectionManager.from_settings(
             self._settings,
@@ -225,8 +227,76 @@ class TekJuiceConnector:
         diagnostician = Diagnostician(
             settings=self._settings,
             manager=self._manager if include_connectivity else None,
+            setup=getattr(self, "_last_setup", None),
         )
         return diagnostician.run()
+
+    def setup(
+        self,
+        *,
+        secret_store: object,
+        receiver: object = None,
+        app: object = None,
+        api_base_url: Optional[str] = None,
+        route_path: Optional[str] = None,
+        register_route: bool = True,
+        public_content_url: Optional[str] = None,
+        rotate: bool = False,
+        rollback_rotation: bool = False,
+        allow_endpoint_change: bool = False,
+        transport: object = None,
+        **options: object,
+    ):
+        """Set up S2S publication end to end and return a
+        :class:`~tekjuice_connector.setup.SetupResult` with evidence per stage.
+
+        Generates the receiver secret on this server only when none is
+        stored (or ``rotate=True``), persists it in *secret_store*,
+        establishes ``TEKJUICE_PUBLICATION_ENDPOINT_URL`` from the configured
+        API base URL and the receiver's route (mounting the route on *app*
+        when the framework allows), proves the public endpoint accepts the
+        secret with a dry run, registers both through the authenticated
+        handshake and waits for the Data Engine's own verification.
+        Publishes nothing. Idempotent; safe to call on every start-up.
+        See ``docs/setup.md``.
+        """
+        from tekjuice_connector.authentication.authentication import Authenticator
+        from tekjuice_connector.client.client import DataEngineClient
+        from tekjuice_connector.setup.workflow import ConnectorSetup
+
+        def handshake(registration):
+            client = DataEngineClient.from_settings(self._settings, transport=transport)
+            manager = ConnectionManager(
+                Authenticator(client, self._settings.credentials, publication=registration),
+                retry_policy=self._retry_policy,
+            )
+            result = manager.connect()
+            # The latest Data Engine answer is also what status() reports.
+            self._manager._last_result = result
+            self._manager._state = result.state
+            return result
+
+        runner = ConnectorSetup(
+            website_id=self._settings.credentials.website_id,
+            handshake=handshake,
+            secret_store=secret_store,
+            receiver=receiver,
+            app=app,
+            api_base_url=api_base_url,
+            route_path=route_path,
+            register_route=register_route,
+            public_content_url=public_content_url,
+            **options,  # type: ignore[arg-type]
+        )
+        self._last_setup = runner.run(
+            rotate=rotate, rollback_rotation=rollback_rotation, allow_endpoint_change=allow_endpoint_change
+        )
+        return getattr(self, "_last_setup", None)
+
+    @property
+    def last_setup(self):
+        """The most recent :class:`~tekjuice_connector.setup.SetupResult`, or None."""
+        return getattr(self, "_last_setup", None)
 
     # ------------------------------------------------------------------
     # Properties

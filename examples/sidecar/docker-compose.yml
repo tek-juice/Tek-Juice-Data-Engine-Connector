@@ -1,0 +1,59 @@
+# Any backend + the Tek Juice connector sidecar + Caddy (automatic HTTPS).
+#
+# 1. Put the connector key and a content API token in ./secrets (git-ignored).
+# 2. Generate the Caddyfile from the sidecar's own configuration:
+#      docker compose run --rm tekjuice-connector proxy-config --caddy \
+#        --upstream tekjuice-connector:8787 --site-upstream backend:3000 > Caddyfile
+# 3. docker compose up -d   (DNS for api.example.com and www.example.com must point here)
+# 4. curl -s localhost:8787/readyz   -> 200 once the Data Engine reports the website ready
+services:
+  backend:
+    # Your application, in any language. Here: the Node.js reference content API.
+    image: node:20-alpine
+    command: node /app/content-api.js
+    volumes: ["./node:/app:ro"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      CONTENT_FILE: /tmp/content.json
+      PUBLIC_URL_TEMPLATE: https://www.example.com/blog/{slug}
+      TEKJUICE_CONTENT_API_TOKEN_FILE: /run/secrets/tekjuice_content_api_token
+    secrets: [tekjuice_content_api_token]
+
+  tekjuice-connector:
+    image: tekjuice-connector:0.7.0
+    restart: unless-stopped
+    ports: ["127.0.0.1:8787:8787"]   # local readiness checks only; Caddy serves the public side
+    volumes: ["tekjuice-data:/var/lib/tekjuice"]   # receiver secret + ledger (named volume: survives recreation)
+    environment:
+      TEKJUICE_WEBSITE_ID: your-website-id
+      TEKJUICE_DATA_ENGINE_URL: https://engine.tekjuice.io
+      TEKJUICE_API_BASE_URL: https://api.example.com
+      TEKJUICE_CONTENT_API_URL: http://backend:3000/tekjuice
+      TEKJUICE_CONNECTOR_KEY_FILE: /run/secrets/tekjuice_connector_key
+      TEKJUICE_CONTENT_API_TOKEN_FILE: /run/secrets/tekjuice_content_api_token
+      # Discoverability and site changes (optional)
+      TEKJUICE_SITE_URL: https://www.example.com
+      TEKJUICE_SHELL_URL: http://backend:3000/
+      TEKJUICE_STATIC_PATHS: /,/pricing
+    secrets: [tekjuice_connector_key, tekjuice_content_api_token]
+    depends_on: [backend]
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data            # certificates
+    depends_on: [tekjuice-connector, backend]
+
+volumes:
+  tekjuice-data:
+  caddy-data:
+
+secrets:
+  tekjuice_connector_key:
+    file: ./secrets/tekjuice_connector_key        # issued in Tek Juice
+  tekjuice_content_api_token:
+    file: ./secrets/tekjuice_content_api_token    # any long random value, e.g. openssl rand -hex 32

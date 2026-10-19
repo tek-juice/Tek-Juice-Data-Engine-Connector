@@ -44,6 +44,12 @@ class ConnectionResult:
     publication_status: Optional[str] = None
     publication_ready: Optional[bool] = None
     next_action: Optional[str] = None
+    # The endpoint the Data Engine has registered and why its last
+    # verification failed (None against older Data Engines).
+    publication_endpoint_url: Optional[str] = None
+    publication_failure_reason: Optional[str] = None
+    # Fingerprint of the receiver secret the Data Engine holds (not the secret).
+    receiver_secret_fingerprint: Optional[str] = None
 
     # Human-readable message (never contains secrets)
     message: str = ""
@@ -64,6 +70,9 @@ class ConnectionResult:
             publication_status=response.publication_status,
             publication_ready=response.publication_ready,
             next_action=response.next_action,
+            publication_endpoint_url=response.publication_endpoint_url,
+            publication_failure_reason=response.publication_failure_reason,
+            receiver_secret_fingerprint=response.receiver_secret_fingerprint,
             message=(
                 "Connector authenticated and backend connected. READY."
                 if response.ready

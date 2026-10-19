@@ -1,0 +1,109 @@
+openapi: 3.1.0
+info:
+  title: Tek Juice content API (implemented by the customer backend)
+  version: "1.0"
+  description: |
+    The connector sidecar calls this API after it has authenticated and
+    validated an S2S publication from the Tek Juice Data Engine. Implement it
+    in any language or framework over your own content model; reference
+    implementations: examples/sidecar/{node,php,go}. Paths are relative to
+    TEKJUICE_CONTENT_API_URL (e.g. http://backend:3000/tekjuice).
+
+    The sidecar keeps the idempotency ledger; store `idempotency_key` with the
+    content anyway so an interrupted create is recognised (GET returns it).
+    Answer 5xx (or 429) for transient failures: the Data Engine retries.
+    Check `tekjuice check-content-api` for conformance (non-mutating).
+security:
+  - bearer: []
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: TEKJUICE_CONTENT_API_TOKEN, shared by the sidecar and the backend (not the receiver secret, not the connector key).
+  schemas:
+    Content:
+      type: object
+      required: [slug, title, body, execution_id, idempotency_key, content_hash]
+      properties:
+        slug: {type: string, pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$", maxLength: 120}
+        title: {type: string}
+        body: {type: string, description: HTML produced by the Data Engine}
+        excerpt: {type: [string, "null"]}
+        meta_description: {type: [string, "null"]}
+        meta_keywords: {type: array, items: {type: string}}
+        discovery: {type: [object, "null"], description: "GEO/AEO material: summary, key_takeaways, faq, json_ld, ..."}
+        execution_id: {type: string}
+        idempotency_key: {type: string}
+        content_hash: {type: string, description: sha256 of the canonical content}
+    Stored:
+      type: object
+      required: [slug]
+      properties:
+        slug: {type: string}
+        url: {type: string, format: uri, description: Public URL the content is served at (else the template is used)}
+        id: {type: string}
+        idempotency_key: {type: [string, "null"]}
+    Errors:
+      type: object
+      properties:
+        errors: {type: array, items: {type: string}}
+  parameters:
+    Slug:
+      name: slug
+      in: path
+      required: true
+      schema: {type: string}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      schema: {type: string}
+paths:
+  /capabilities:
+    get:
+      summary: Optional. What the backend supports.
+      responses:
+        "200":
+          description: Capabilities
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  update: {type: boolean, default: true}
+                  validate: {type: boolean, default: false}
+                  public_url_template: {type: string, example: "https://www.example.com/blog/{slug}"}
+        "404": {description: Not implemented; defaults apply (set TEKJUICE_PUBLIC_URL_TEMPLATE)}
+  /content/{slug}:
+    get:
+      summary: Content published by Tek Juice at this slug.
+      parameters: [{$ref: "#/components/parameters/Slug"}]
+      responses:
+        "200": {description: Found, content: {application/json: {schema: {$ref: "#/components/schemas/Stored"}}}}
+        "404": {description: No content at this slug}
+    put:
+      summary: Update content previously published at this slug.
+      parameters: [{$ref: "#/components/parameters/Slug"}, {$ref: "#/components/parameters/IdempotencyKey"}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/Content"}}}}
+      responses:
+        "200": {description: Updated, content: {application/json: {schema: {$ref: "#/components/schemas/Stored"}}}}
+        "404": {description: No content at this slug}
+        "422": {description: Rejected by the backend's rules, content: {application/json: {schema: {$ref: "#/components/schemas/Errors"}}}}
+  /content:
+    post:
+      summary: Create content.
+      parameters: [{$ref: "#/components/parameters/IdempotencyKey"}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/Content"}}}}
+      responses:
+        "201": {description: Created, content: {application/json: {schema: {$ref: "#/components/schemas/Stored"}}}}
+        "200": {description: Already created by this idempotency key, content: {application/json: {schema: {$ref: "#/components/schemas/Stored"}}}}
+        "409": {description: The slug belongs to other content}
+        "422": {description: Rejected by the backend's rules, content: {application/json: {schema: {$ref: "#/components/schemas/Errors"}}}}
+  /content/validate:
+    post:
+      summary: Optional dry run. Must not write anything.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: "#/components/schemas/Content"}}}}
+      responses:
+        "200": {description: Would be accepted}
+        "422": {description: Would be rejected, content: {application/json: {schema: {$ref: "#/components/schemas/Errors"}}}}
