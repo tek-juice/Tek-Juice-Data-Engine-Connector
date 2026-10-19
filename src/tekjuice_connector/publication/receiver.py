@@ -63,6 +63,7 @@ from tekjuice_connector.publication.errors import (
     ReceiverAuthenticationError,
     RequestTooLargeError,
     TargetNotFoundError,
+    UnsupportedCapabilityError,
     UnsupportedOperationError,
     WebsiteMismatchError,
 )
@@ -78,6 +79,17 @@ from tekjuice_connector.publication.contract import (
     CAPABILITY_SEO_SITEMAP,
 )
 from tekjuice_connector.publication.store import StoredContent, store_capabilities
+from tekjuice_connector.publication.performance import (
+    ACTION_CAPABILITIES,
+    ACTION_PERFORMANCE_CHANGE,
+    CAPABILITY_COMPRESSION,
+    CAPABILITY_STATIC_CACHE,
+    DISCOVERY_VERSION,
+    UNSUPPORTED_REASONS,
+    parse_performance_change,
+    required_capability,
+)
+from tekjuice_connector.version import __version__
 from tekjuice_connector.security.secrets import SecretStr
 
 _log = logging.getLogger(__name__)
@@ -136,6 +148,7 @@ class PublicationReceiver:
         max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
         seo: object = None,
         secret_store: object = None,
+        performance: object = None,
     ) -> None:
         secret = (
             receiver_secret.reveal()
@@ -162,6 +175,7 @@ class PublicationReceiver:
         self._website_id = str(website_id)
         self._secret_store = secret_store
         self._seo = seo
+        self._performance = performance
         self._lock = threading.Lock()
         self._accepted: Tuple[SecretStr, ...] = (SecretStr(secret),) if secret else ()
         self._loaded_at = 0.0
@@ -188,7 +202,15 @@ class PublicationReceiver:
             # store and a sitemap served by SeoPages.
             if CAPABILITY_SITE_CHANGES in capabilities and CAPABILITY_SEO_SITEMAP in capabilities:
                 capabilities.add(CAPABILITY_SITE_CHANGES_SITEMAP)
-        self.capabilities = frozenset(capabilities)
+        self._static_capabilities = frozenset(capabilities)
+
+    @property
+    def capabilities(self) -> frozenset:
+        """What this receiver can do now. Performance controls count only
+        once their middleware wraps the application (see publication.performance)."""
+        performance = self._performance
+        extra = performance.capabilities() if performance is not None else ()
+        return self._static_capabilities | frozenset(extra)
 
     # ------------------------------------------------------------------
     # Public API
@@ -324,6 +346,10 @@ class PublicationReceiver:
             return self._verify(data)
         if action == ACTION_SITE_CHANGE:
             return self._site_change(data)
+        if action == ACTION_CAPABILITIES:
+            return self._capabilities(data)
+        if action == ACTION_PERFORMANCE_CHANGE:
+            return self._performance_change(data)
 
         request = parse_publish_request(data)
         if request.action == ACTION_CREATE:
@@ -337,6 +363,35 @@ class PublicationReceiver:
         if request.change["type"] == "sitemap":
             self._require(CAPABILITY_SITE_CHANGES_SITEMAP, ACTION_SITE_CHANGE)
         body = apply_site_change(self._store, request)
+        return ReceiverResponse(200, {**body, "contract_version": CONTRACT_VERSION, "website_id": self._website_id,
+                                      "idempotency_key": request.idempotency_key})
+
+    def _capabilities(self, data: Dict[str, Any]) -> ReceiverResponse:
+        """Authenticated, versioned capability discovery (writes nothing)."""
+        unknown = set(data) - {"contract_version", "action", "website_id"}
+        if unknown:
+            raise MalformedRequestError(f"Unknown request field(s): {', '.join(sorted(unknown))}")
+        performance = self._performance.describe() if self._performance is not None else {
+            "capabilities": {}, "unsupported": {
+                CAPABILITY_STATIC_CACHE: "performance controls are not configured on this receiver",
+                CAPABILITY_COMPRESSION: "performance controls are not configured on this receiver",
+                **UNSUPPORTED_REASONS}}
+        return ReceiverResponse(200, {
+            "status": "ok", "discovery_version": DISCOVERY_VERSION, "contract_version": CONTRACT_VERSION,
+            "contract_versions": sorted(SUPPORTED_CONTRACT_VERSIONS), "website_id": self._website_id,
+            "connector_version": __version__, "capabilities": sorted(self.capabilities),
+            "capability_details": performance["capabilities"], "unsupported": performance["unsupported"],
+        })
+
+    def _performance_change(self, data: Dict[str, Any]) -> ReceiverResponse:
+        request = parse_performance_change(data)
+        capability = required_capability(request.change)
+        if self._performance is None or capability not in self.capabilities:
+            raise UnsupportedCapabilityError(
+                f"This receiver does not support '{capability}' (performance middleware not installed)",
+                capability=capability)
+        body = self._performance.apply(request)
+        _log.info("Performance change applied: %s (replayed=%s)", request.change["type"], body["replayed"])
         return ReceiverResponse(200, {**body, "contract_version": CONTRACT_VERSION, "website_id": self._website_id,
                                       "idempotency_key": request.idempotency_key})
 

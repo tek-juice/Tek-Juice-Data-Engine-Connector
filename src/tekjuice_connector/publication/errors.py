@@ -90,6 +90,25 @@ class UnsupportedOperationError(ContractViolationError):
     code = "unsupported_operation"
 
 
+class UnsupportedCapabilityError(UnsupportedOperationError):
+    """The customer environment cannot perform the requested change.
+
+    The body names the missing capability so the Data Engine can keep the
+    remediation plan for a later, supported workflow.
+    """
+
+    code = "unsupported_capability"
+
+    def __init__(self, message: str, *, capability: str) -> None:
+        super().__init__(message)
+        self.capability = capability
+
+    def to_response_body(self) -> Dict[str, Any]:
+        body = super().to_response_body()
+        body["error"]["capability"] = self.capability
+        return body
+
+
 class ContentStoreError(PublicationError):
     """The customer's content store failed transiently (safe to retry)."""
 

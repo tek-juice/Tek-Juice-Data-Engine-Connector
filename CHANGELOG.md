@@ -9,6 +9,38 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- Performance controls (`publication.performance`, docs/performance.md):
+  `PerformanceControls` with ASGI and WSGI middleware applying approved,
+  reversible delivery settings: `performance.static_cache` (long-lived
+  `Cache-Control` for content-hashed static files under approved
+  directories only; never HTML, JSON/API, Set-Cookie, credentialed or
+  private/no-store responses) and `performance.compression` (gzip, Brotli
+  when installed; never streaming, partial or already-encoded responses),
+  with `performance.snapshot` (previous configuration returned, `restore`).
+  Advertised only once the middleware wraps the application.
+- S2S `capabilities` action: authenticated, versioned capability discovery
+  (`discovery_version`, `capability_details`, observed static directories,
+  `unsupported` with reasons). Writes nothing.
+- S2S `performance_change` action (idempotent per key). Image and CDN
+  changes are refused with the structured `unsupported_capability` error
+  (`error.capability`), as nothing implements them.
+- `PublicationReceiver(performance=...)`; `capabilities` is now computed
+  (the static set plus installed performance controls).
+
+## [0.7.1] — 2026-10-19
+
+### Added
+- Pre-rendered article pages embed the article as JSON
+  (`<script type="application/json" id="tekjuice-content">`: slug, title,
+  excerpt, body, the escaped body HTML, meta description, keywords, canonical URL,
+  modified time) and
+  the article index embeds its list (`id="tekjuice-hub"`). A single-page app
+  that reads it before its first render shows the same content on its first
+  frame: no API round trip, no loading state, so replacing the pre-rendered
+  HTML neither shifts the layout (CLS) nor delays the largest paint (LCP).
+  The JSON is escaped so content cannot end the script element.
+
 ## [0.7.0] — 2026-10-19
 
 ### Added

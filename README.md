@@ -137,6 +137,12 @@ They are never interchangeable. S2S through this package is the only
 publication transport the Data Engine supports; the earlier M2M transport is
 retired. See [docs/authentication.md](docs/authentication.md).
 
+## Performance controls
+
+Optional middleware lets the Data Engine apply approved, reversible delivery
+settings (static-asset caching, compression) without code changes; see
+[docs/performance.md](docs/performance.md).
+
 ## Documentation
 
 - [Installation](docs/installation.md)

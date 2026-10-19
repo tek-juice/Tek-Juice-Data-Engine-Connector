@@ -39,9 +39,10 @@ import hmac
 import html
 import json
 import re
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, Callable, Iterable, List, Optional, Sequence, Tuple
 
 from tekjuice_connector.publication.contract import PublicationContent
 
@@ -329,9 +330,15 @@ def render_page(
     site_url: Optional[str] = None,
     modified_time: Optional[datetime] = None,
     entity: Optional[dict] = None,
+    template: Optional[str] = None,
 ) -> str:
     """Return *shell_html* with the article's own head tags and its text in
-    the app's root element (or right after ``<body>`` if there is none)."""
+    the app's root element (or right after ``<body>`` if there is none).
+
+    ``template`` (the site's own markup, see ``SeoPages(page_templates=...)``)
+    replaces the default ``<article>``: ``{{tekjuice:title}}``,
+    ``{{tekjuice:excerpt}}``, ``{{tekjuice:body_html}}``, ``{{tekjuice:slug}}``,
+    ``{{tekjuice:canonical_url}}``."""
     title = html.escape(content.title)
     description = html.escape(_description(content), quote=True)
     url = html.escape(canonical_url, quote=True)
@@ -370,9 +377,15 @@ def render_page(
     else:
         page = head + page
 
-    before, after = _visible_discovery(content)
-    article = (f"<article><h1>{title}</h1>\n{before}\n{markdown_to_html(content.body)}\n{after}"
-               f'\n<p>Source: <a href="{url}">{url}</a></p></article>')
+    if template:
+        article = fill_template(template, {
+            "title": title, "excerpt": html.escape(content.excerpt or ""), "body_html": article_body_html(content),
+            "slug": html.escape(content.slug), "canonical_url": html.escape(canonical_url, quote=True),
+        })
+    else:
+        before, after = _visible_discovery(content)
+        article = (f"<article><h1>{title}</h1>\n{before}\n{markdown_to_html(content.body)}\n{after}"
+                   f'\n<p>Source: <a href="{url}">{url}</a></p></article>')
     root = re.search(r'(<div\s+id=["\']root["\'][^>]*>)(\s*)(</div>)', page, re.I)
     if root:
         page = page[:root.end(1)] + article + page[root.start(3):]
@@ -380,7 +393,61 @@ def render_page(
         page = re.sub(r"(<body[^>]*>)", r"\1" + article.replace("\\", "\\\\"), page, count=1, flags=re.I)
     else:
         page += article
-    return page
+    # The article's data for the site's own app (see prerender_payload):
+    # an app that reads it renders the same article on its first frame,
+    # with no API round trip or loading state, so replacing the pre-rendered
+    # HTML neither shifts the layout nor delays the largest paint.
+    return _with_data(page, PRERENDER_DATA_ID,
+                      prerender_payload(content, canonical_url=canonical_url, modified_time=modified_time))
+
+
+PRERENDER_DATA_ID = "tekjuice-content"
+_PLACEHOLDER = re.compile(r"\{\{tekjuice:([a-z_]+)\}\}")
+
+
+def fill_template(template: str, values: Dict[str, str]) -> str:
+    """Replace ``{{tekjuice:name}}`` placeholders (one pass: values, which are
+    already escaped HTML, are never scanned for placeholders)."""
+    return _PLACEHOLDER.sub(lambda m: values.get(m.group(1), ""), template)
+
+
+def article_body_html(content: PublicationContent) -> str:
+    """The article body as escaped HTML, with its visible discovery blocks
+    (summary, key takeaways, FAQ): what the pre-rendered page shows."""
+    before, after = _visible_discovery(content)
+    return "\n".join(part for part in (before, markdown_to_html(content.body), after) if part)
+HUB_DATA_ID = "tekjuice-hub"
+
+
+def _script_json(data: Any) -> str:
+    text = json.dumps(data, ensure_ascii=False)
+    # Nothing in the text can close the script element or break JS parsing.
+    return (text.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+
+
+def _with_data(page: str, element_id: str, data: str) -> str:
+    tag = f'<script type="application/json" id="{element_id}">{data}</script>'
+    if re.search(r"</body>", page, re.I):
+        return re.sub(r"</body>", lambda _m: tag + "\n</body>", page, count=1, flags=re.I)
+    return page + tag
+
+
+def prerender_payload(content: PublicationContent, *, canonical_url: str,
+                      modified_time: Optional[datetime] = None) -> str:
+    """JSON (safe inside a <script>) describing the pre-rendered article:
+    ``slug``, ``title``, ``excerpt``, ``body`` (as stored), ``body_html`` (the
+    escaped HTML the pre-rendered page shows), ``meta_description``,
+    ``meta_keywords``, ``canonical_url``, ``modified``."""
+    data = {
+        "slug": content.slug, "title": content.title, "excerpt": content.excerpt, "body": content.body,
+        # The body as the pre-rendered page shows it (escaped HTML): an app can
+        # display it without shipping its own Markdown renderer to readers.
+        "body_html": article_body_html(content),
+        "meta_description": content.meta_description, "meta_keywords": list(content.meta_keywords),
+        "canonical_url": canonical_url, "modified": modified_time.isoformat() if modified_time else None,
+    }
+    return _script_json(data)
 
 
 def render_hub(
@@ -391,6 +458,8 @@ def render_hub(
     description: str,
     items: Sequence[tuple],
     site_name: Optional[str] = None,
+    template: Optional[str] = None,
+    item_template: Optional[str] = None,
 ) -> str:
     """The site's article index (e.g. /resources) as server-rendered HTML:
     its own title, description and self-canonical, and a plain link to every
@@ -428,12 +497,23 @@ def render_hub(
         + (f"<p>{html.escape(summary)}</p>" if summary else "") + "</li>"
         for url, name, summary in items)
     body = f"<main><h1>{t}</h1>\n<p>{html.escape(description)}</p>\n<ul>{entries}</ul></main>"
+    if template and item_template:
+        cards = "".join(fill_template(item_template, {
+            "url": html.escape(url, quote=True), "slug": html.escape(urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1]),
+            "title": html.escape(name), "summary": html.escape(summary or "")}) for url, name, summary in items)
+        body = fill_template(template, {"items": cards, "title": t, "description": html.escape(description)})
     root = re.search(r'(<div\s+id=["\']root["\'][^>]*>)(\s*)(</div>)', page, re.I)
     if root:
-        return page[:root.end(1)] + body + page[root.start(3):]
-    if re.search(r"<body[^>]*>", page, re.I):
-        return re.sub(r"(<body[^>]*>)", r"\1" + body.replace("\\", "\\\\"), page, count=1, flags=re.I)
-    return page + body
+        page = page[:root.end(1)] + body + page[root.start(3):]
+    elif re.search(r"<body[^>]*>", page, re.I):
+        page = re.sub(r"(<body[^>]*>)", r"\1" + body.replace("\\", "\\\\"), page, count=1, flags=re.I)
+    else:
+        page += body
+    # The list for the site's app (first frame without an API round trip).
+    data = {"title": title, "description": description, "url": hub_url,
+            "items": [{"url": url, "slug": urlsplit(url).path.rstrip("/").rsplit("/", 1)[-1], "title": name,
+                       "summary": summary} for url, name, summary in items]}
+    return _with_data(page, HUB_DATA_ID, _script_json(data))
 
 
 # ---------------------------------------------------------------------------
@@ -549,7 +629,15 @@ class SeoPages:
         hub_path: Optional[str] = None,
         hub_title: Optional[str] = None,
         hub_description: Optional[str] = None,
+        page_templates: Optional[Callable[[], Optional[Dict[str, str]]]] = None,
     ) -> None:
+        """``page_templates`` (optional): returns the site's own markup for
+        pre-rendered pages, ``{"article": ..., "hub": ..., "hub_item": ...}``
+        with ``{{tekjuice:*}}`` placeholders (see render_page/render_hub). When
+        it is the markup the site's app renders, the app's first frame
+        repaints the same elements: no layout shift, and the largest paint
+        does not wait for the app's scripts. Missing templates fall back to
+        the default markup."""
         if not callable(getattr(store, "get_content", None)):
             raise TypeError("The content store must implement get_content(slug) to pre-render pages")
         self._store = store
@@ -563,6 +651,17 @@ class SeoPages:
         self._hub_title = hub_title or "Articles"
         self._hub_description = hub_description or ""
         self._indexnow_key: Optional[str] = None
+        self._templates_source = page_templates
+
+    def _template(self, name: str) -> Optional[str]:
+        if self._templates_source is None:
+            return None
+        try:
+            templates = self._templates_source() or {}
+        except Exception:  # noqa: BLE001 - an unavailable template falls back to the default markup
+            return None
+        value = templates.get(name)
+        return value if isinstance(value, str) and "{{tekjuice:" in value else None
 
     def set_indexnow_key(self, key: str) -> None:
         """Called by PublicationReceiver; the key is served at /<key>.txt."""
@@ -653,6 +752,7 @@ class SeoPages:
             site_url=self._site + "/",
             modified_time=self._modified(slug),
             entity=self.entity(),
+            template=self._template("article"),
         )
 
     def hub(self) -> Optional[str]:
@@ -664,7 +764,8 @@ class SeoPages:
             summary = (content.discovery or {}).get("summary") or _description(content)
             items.append((self.canonical_url(page.slug), content.title, (summary or "")[:220]))
         return render_hub(self._shell(), hub_url=self._site + self._hub, title=self._hub_title,
-                          description=self._hub_description, items=items, site_name=self._site_name)
+                          description=self._hub_description, items=items, site_name=self._site_name,
+                          template=self._template("hub"), item_template=self._template("hub_item"))
 
     def markdown(self, slug: str) -> Optional[str]:
         content = self._store.get_content(slug)

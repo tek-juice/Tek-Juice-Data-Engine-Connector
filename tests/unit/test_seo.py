@@ -355,3 +355,92 @@ def test_hub_route_answers_get_and_head():
     assert response.status_code == 200 and "tracking-every-expense" in response.text
     assert 'rel="canonical"' in response.headers["link"] and "/resources" in response.headers["link"]
     assert client.head("/seo/page/resources").status_code == 200
+
+
+def _embedded(page, element_id):
+    import json
+    import re
+
+    match = re.search(rf'<script type="application/json" id="{element_id}">(.*?)</script>', page, re.S)
+    assert match, f"{element_id} missing"
+    return json.loads(match.group(1))
+
+
+def test_prerendered_page_embeds_the_article_for_the_sites_app():
+    from tekjuice_connector.publication.contract import PublicationContent
+    from tekjuice_connector.publication.seo import PRERENDER_DATA_ID, render_page
+
+    shell = '<html><head><title>x</title></head><body><div id="root"></div><script src="/app.js"></script></body></html>'
+    content = PublicationContent(title="Guide </script><img onerror=x>", body="# Hi\n\nBody & <b>more</b> ",
+                                 slug="guide", excerpt="Short", meta_description="Desc", meta_keywords=["a"])
+    page = render_page(shell, content=content, canonical_url="https://s.example/guide")
+    data = _embedded(page, PRERENDER_DATA_ID)
+    assert data["slug"] == "guide" and data["title"] == content.title and data["body"] == content.body
+    assert data["excerpt"] == "Short" and data["canonical_url"] == "https://s.example/guide"
+    assert "<h2>Hi</h2>" in data["body_html"] and "<b>" not in data["body_html"]  # escaped HTML (title is the h1)
+    # Hostile text cannot end the script element early.
+    raw = page.split(f'id="{PRERENDER_DATA_ID}">', 1)[1].split("</script>", 1)[0]
+    assert "<" not in raw and ">" not in raw
+    assert page.index(PRERENDER_DATA_ID) < page.index("</body>")
+
+
+def test_prerendered_hub_embeds_the_article_list():
+    from tekjuice_connector.publication.seo import HUB_DATA_ID, render_hub
+
+    shell = '<html><head></head><body><div id="root"></div></body></html>'
+    page = render_hub(shell, hub_url="https://s.example/resources", title="Insights", description="All guides",
+                      items=[("https://s.example/guide", "Guide", "About it")])
+    data = _embedded(page, HUB_DATA_ID)
+    assert data["items"] == [{"url": "https://s.example/guide", "slug": "guide", "title": "Guide",
+                              "summary": "About it"}]
+
+
+def test_site_template_replaces_the_default_markup_with_escaped_values():
+    from tekjuice_connector.publication.contract import PublicationContent
+    from tekjuice_connector.publication.seo import PRERENDER_DATA_ID, render_page
+
+    shell = '<html><head><title>x</title></head><body><div id="root"></div></body></html>'
+    template = ('<div class="layout"><h1 class="hero">{{tekjuice:title}}</h1><p>{{tekjuice:excerpt}}</p>'
+                '<div class="prose">{{tekjuice:body_html}}</div><a href="/{{tekjuice:slug}}">x</a>{{tekjuice:unknown}}</div>')
+    content = PublicationContent(title="A & <B>", body="Text {{tekjuice:title}} here", slug="a-b", excerpt="Ex <i>")
+    page = render_page(shell, content=content, canonical_url="https://s.example/a-b", template=template)
+    root = page.split('<div id="root">', 1)[1].split('<script', 1)[0]
+    assert '<h1 class="hero">A &amp; &lt;B&gt;</h1>' in root and "<p>Ex &lt;i&gt;</p>" in root
+    assert 'href="/a-b"' in root and "<article>" not in root
+    assert "{{tekjuice:title}}" in root  # placeholder text inside content is never substituted
+    assert "{{tekjuice:unknown}}" not in root
+    # The app's data carries the same body HTML as the template shows.
+    data = _embedded(page, PRERENDER_DATA_ID)
+    assert data["body_html"] in root
+
+
+def test_hub_templates_build_the_list_from_the_item_template():
+    from tekjuice_connector.publication.seo import render_hub
+
+    shell = '<html><head></head><body><div id="root"></div></body></html>'
+    page = render_hub(shell, hub_url="https://s.example/resources", title="Insights", description="All",
+                      items=[("https://s.example/a", "A <1>", "Sum"), ("https://s.example/b", "B", "")],
+                      template='<main class="grid">{{tekjuice:items}}</main>',
+                      item_template='<article><h2>{{tekjuice:title}}</h2><a href="/{{tekjuice:slug}}">r</a></article>')
+    root = page.split('<div id="root">', 1)[1].split('<script', 1)[0]
+    assert root.startswith('<main class="grid"><article><h2>A &lt;1&gt;</h2><a href="/a">')
+    assert root.count("<article>") == 2
+
+
+def test_seo_pages_fall_back_when_templates_are_unavailable():
+    from tekjuice_connector.publication import InMemoryContentStore
+    from tekjuice_connector.publication.contract import PublicationContent
+    from tekjuice_connector.publication.seo import SeoPages
+
+    store = InMemoryContentStore("https://s.example")
+    store.create(PublicationContent(title="Guide", body="Body", slug="guide"), execution_id="e", idempotency_key="k")
+    shell = lambda: '<html><head></head><body><div id="root"></div></body></html>'  # noqa: E731
+
+    def broken():
+        raise OSError("templates unreachable")
+
+    assert "<article><h1>Guide</h1>" in SeoPages(store, site_url="https://s.example", shell_html=shell,
+                                                 page_templates=broken).page("guide")
+    templated = SeoPages(store, site_url="https://s.example", shell_html=shell,
+                         page_templates=lambda: {"article": "<section>{{tekjuice:title}}</section>"}).page("guide")
+    assert "<section>Guide</section>" in templated
