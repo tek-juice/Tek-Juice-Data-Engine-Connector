@@ -51,7 +51,9 @@ class SidecarConfig:
     connector_key: str
     data_engine_url: str
     api_base_url: Optional[str]
-    content_api_url: str
+    # The backend's content API, or None: the connector then keeps published
+    # articles itself (standalone) and serves them at ``articles_url``.
+    content_api_url: Optional[str]
     content_api_token: Optional[str]
     public_url_template: Optional[str]
     public_content_url: Optional[str]
@@ -77,6 +79,15 @@ class SidecarConfig:
     # HTTPS served by the sidecar itself (PEM files; reloaded when they change).
     tls_cert_file: Optional[Path] = None
     tls_key_file: Optional[Path] = None
+    # Standalone: public base URL of published articles, e.g.
+    # https://www.example.com/articles (articles at /articles/<slug>, index
+    # at /articles). Needs no code in the backend: the proxy sends that path
+    # and the receiver route to the connector.
+    articles_url: Optional[str] = None
+
+    @property
+    def standalone(self) -> bool:
+        return not self.content_api_url
 
     @classmethod
     def from_env(cls, env: Optional[Dict[str, str]] = None) -> "SidecarConfig":
@@ -94,8 +105,9 @@ class SidecarConfig:
         data_dir = Path(env.get("TEKJUICE_DATA_DIR", "/var/lib/tekjuice"))
         listen = env.get("TEKJUICE_LISTEN", "0.0.0.0:8787")
         host, _, port = listen.rpartition(":")
-        missing = [k for k in ("TEKJUICE_WEBSITE_ID", "TEKJUICE_DATA_ENGINE_URL", "TEKJUICE_CONTENT_API_URL")
-                   if not env.get(k)]
+        missing = [k for k in ("TEKJUICE_WEBSITE_ID", "TEKJUICE_DATA_ENGINE_URL") if not env.get(k)]
+        if not env.get("TEKJUICE_CONTENT_API_URL") and not env.get("TEKJUICE_ARTICLES_URL"):
+            missing.append("TEKJUICE_CONTENT_API_URL (or TEKJUICE_ARTICLES_URL for standalone)")
         if not secret("TEKJUICE_CONNECTOR_KEY"):
             missing.append("TEKJUICE_CONNECTOR_KEY")
         if missing:
@@ -105,7 +117,7 @@ class SidecarConfig:
             connector_key=secret("TEKJUICE_CONNECTOR_KEY") or "",
             data_engine_url=env["TEKJUICE_DATA_ENGINE_URL"],
             api_base_url=env.get("TEKJUICE_API_BASE_URL"),
-            content_api_url=env["TEKJUICE_CONTENT_API_URL"],
+            content_api_url=env.get("TEKJUICE_CONTENT_API_URL") or None,
             content_api_token=secret("TEKJUICE_CONTENT_API_TOKEN"),
             public_url_template=env.get("TEKJUICE_PUBLIC_URL_TEMPLATE"),
             public_content_url=env.get("TEKJUICE_PUBLIC_CONTENT_URL"),
@@ -127,7 +139,19 @@ class SidecarConfig:
             hub_description=env.get("TEKJUICE_HUB_DESCRIPTION") or None,
             tls_cert_file=Path(env["TEKJUICE_TLS_CERT_FILE"]) if env.get("TEKJUICE_TLS_CERT_FILE") else None,
             tls_key_file=Path(env["TEKJUICE_TLS_KEY_FILE"]) if env.get("TEKJUICE_TLS_KEY_FILE") else None,
+            articles_url=_articles_url(env.get("TEKJUICE_ARTICLES_URL")),
         )
+
+
+def _articles_url(value: Optional[str]) -> Optional[str]:
+    if not value:
+        return None
+    parts = urlsplit(value.strip())
+    if parts.scheme != "https" or not parts.hostname or parts.query or parts.fragment:
+        raise ValueError("TEKJUICE_ARTICLES_URL must be an https URL such as https://www.example.com/articles")
+    if parts.path.strip("/") == "":
+        raise ValueError("TEKJUICE_ARTICLES_URL needs its own path (e.g. /articles), not the site root")
+    return value.strip().rstrip("/")
 
 
 def _paths(value: Optional[str], default: tuple) -> tuple:
@@ -175,6 +199,9 @@ class Sidecar:
         self.config = config
         config.data_dir.mkdir(parents=True, exist_ok=True)
         self.secret_store = secret_store or FileSecretStore(config.secret_file)
+        self.articles = None
+        if content_store is None and config.standalone:
+            content_store, self.articles = self._standalone(config)
         self.content_store = content_store or HttpContentStore(
             config.content_api_url,
             ledger_path=str(config.data_dir / "ledger.sqlite3"),
@@ -201,6 +228,27 @@ class Sidecar:
         self._stop = threading.Event()
         self._server: Optional[ThreadingHTTPServer] = None
         self._setup_thread: Optional[threading.Thread] = None
+
+    @staticmethod
+    def _standalone(config: SidecarConfig) -> tuple:
+        """The connector's own article store and the pages it serves.
+
+        The pages are not advertised as discoverability capabilities (the
+        receiver gets no SeoPages): only the article paths reach the
+        connector, so it must not claim the site's sitemap or robots.txt."""
+        from tekjuice_connector.publication import SQLiteContentStore
+        from tekjuice_connector.publication.seo import SeoPages
+
+        if not config.articles_url:
+            raise ValueError("Standalone mode needs TEKJUICE_ARTICLES_URL")
+        parts = urlsplit(config.articles_url)
+        site = f"{parts.scheme}://{parts.netloc}"
+        store = SQLiteContentStore(str(config.data_dir / "content.sqlite3"), config.articles_url)
+        pages = SeoPages(store, site_url=site, shell_html=ShellHtml(config.shell_url or site + "/"),
+                         static_paths=(), site_name=config.site_name, site_description=config.site_description,
+                         hub_path=parts.path.rstrip("/"), hub_title=config.hub_title,
+                         hub_description=config.hub_description)
+        return store, pages
 
     # ------------------------------------------------------------------
 
@@ -256,6 +304,7 @@ class Sidecar:
         route = self.config.route_path.rstrip("/") or "/"
         limit = self.receiver.max_body_bytes
         seo_prefix = self.config.seo_prefix.rstrip("/")
+        articles = urlsplit(self.config.articles_url).path.rstrip("/") if self.articles is not None else None
 
         class Handler(BaseHTTPRequestHandler):
             server_version = "tekjuice-connector"
@@ -281,6 +330,9 @@ class Sidecar:
                     return self._send(*sidecar.readiness())
                 if sidecar.seo is not None and (path == seo_prefix or path.startswith(seo_prefix + "/")):
                     status, headers, body = seo_response(sidecar.seo, path[len(seo_prefix):])
+                    return self._raw(status, body, headers)
+                if sidecar.articles is not None and (path == articles or path.startswith(articles + "/")):
+                    status, headers, body = seo_response(sidecar.articles, "/site" + path)
                     return self._raw(status, body, headers)
                 return self._send(404, {"status": "error", "error": {"code": "not_found"}})
 

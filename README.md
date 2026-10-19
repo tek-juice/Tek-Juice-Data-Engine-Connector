@@ -12,6 +12,19 @@ publication, whatever the backend is written in:
 - **Python backends** can also embed it (`pip install tekjuice-connector`) and
   mount the receiver in FastAPI, Flask or Django ([docs/setup.md](docs/setup.md)).
 
+## Connect a server in one command (0.8.0+)
+
+Put the three values from the Tek Juice setup page in the backend's `.env`, then on the server:
+
+```bash
+pip install tekjuice-connector
+tekjuice connect
+```
+
+It authenticates, detects the server, asks only for what it cannot discover, creates the
+publication endpoint beside your application (any language; no code changes) and waits until
+the website is READY. See [docs/connect.md](docs/connect.md).
+
 ## Receiving publications (0.2.0+)
 
 Mount a `PublicationReceiver` over your own content model with the adapter for

@@ -108,6 +108,14 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     # setup
+    connect_p = subparsers.add_parser(
+        "connect",
+        help="Connect this server in one step: credentials, handshake, endpoint, verification (any language).",
+    )
+    connect_p.add_argument("--env-file", default=".env", help="Dotenv file with the credentials (default: .env).")
+    connect_p.add_argument("--project-dir", default=".", help="The application's directory (default: current).")
+    connect_p.add_argument("--yes", "-y", action="store_true", help="Accept the proposed addresses and changes.")
+
     setup_p = subparsers.add_parser(
         "setup",
         help="Set up S2S publication: receiver secret, endpoint URL, registration, verification.",
@@ -171,6 +179,11 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "serve":
         from tekjuice_connector.cli.serve import run_serve
         return run_serve()
+
+    if args.command == "connect":
+        from tekjuice_connector.connect.wizard import run_connect
+
+        return run_connect(env_file=args.env_file, project_dir=args.project_dir, assume_yes=args.yes)
 
     if args.command == "setup":
         from tekjuice_connector.cli.setup import run_setup

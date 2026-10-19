@@ -9,7 +9,24 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-19
+
 ### Added
+- `tekjuice connect` (docs/connect.md): connect a server in one command,
+  whatever the application is written in. Reads the three setup-page values
+  from `.env` (asks for missing ones, the key without echo, and saves them),
+  authenticates, detects the application/web server/systemd, asks only for
+  the public address and the articles path, reuses an existing receiver or
+  creates the endpoint: the connector runs beside the application as a
+  systemd service, keeps the receiver secret and the articles itself, and
+  nginx gets one include for `/tekjuice/publish` and the articles path
+  (backup, `nginx -t`, restore on failure; Caddy/Apache configuration
+  printed). Waits until the Data Engine has verified the endpoint.
+- Sidecar standalone mode (`TEKJUICE_ARTICLES_URL` without
+  `TEKJUICE_CONTENT_API_URL`): published articles are stored by the
+  connector (SQLite in the data directory) and served at
+  `<articles path>/<slug>` and an index at `<articles path>`; only publication
+  capabilities are advertised.
 - Performance controls (`publication.performance`, docs/performance.md):
   `PerformanceControls` with ASGI and WSGI middleware applying approved,
   reversible delivery settings: `performance.static_cache` (long-lived
