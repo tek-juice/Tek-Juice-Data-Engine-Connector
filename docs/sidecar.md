@@ -44,12 +44,21 @@ docker run -d --name tekjuice-connector --restart unless-stopped \
   -e TEKJUICE_API_BASE_URL=https://api.example.com \
   -e TEKJUICE_CONTENT_API_URL=http://backend:3000/tekjuice \
   -e TEKJUICE_CONTENT_API_TOKEN_FILE=/run/secrets/tekjuice_content_api_token \
-  ghcr.io/tek-juice/tekjuice-connector:0.7.0
+  tekjuice-connector:0.8.0
 ```
 
-The image is published for linux/amd64 and linux/arm64 with every release
-(`ghcr.io/tek-juice/tekjuice-connector:<version>` and `:latest`); to build it
-yourself: `docker build -t tekjuice-connector .` in this repository.
+Get the image by building it straight from the public repository (no
+registry login, any machine with Docker; pin the release tag):
+
+```bash
+docker build -t tekjuice-connector:0.8.0 \
+  "https://github.com/tek-juice/Tek-Juice-Data-Engine-Connector.git#v0.8.0"
+```
+
+and use `tekjuice-connector:0.8.0` as the image name above. Releases are
+also pushed to `ghcr.io/tek-juice/tekjuice-connector:<version>` (linux/amd64
+and linux/arm64); pulling from there works without a login only once the
+package is public.
 
 A complete Compose file is in `examples/sidecar/docker-compose.yml`. Without
 Docker, run `pipx install tekjuice-connector` and then `tekjuice serve`
