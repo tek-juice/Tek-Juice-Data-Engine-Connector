@@ -54,6 +54,9 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
       ``/{slug}.md``)
     * ``{prefix}/llms.txt``, ``{prefix}/llms-full.txt``, ``{prefix}/feed.json``
     * ``{prefix}/entity.json``: the business's verified facts
+    * ``{prefix}/home``: the site's home page with the business's identity
+      JSON-LD (map ``/`` here; a site rendering its own home page calls
+      ``seo.with_identity(html)`` instead)
     * ``{prefix}/indexnow/{key}``: the IndexNow key file (serve it at
       ``/{key}.txt``)
 
@@ -126,6 +129,15 @@ def create_seo_router(seo, *, prefix: str = "/tekjuice/seo"):
                         headers={"Cache-Control": "public, max-age=900"})
 
     routes.append(("entity.json", entity, "entity"))
+
+    async def home() -> Response:
+        body = await run_in_threadpool(seo.home)
+        if body is None:
+            return Response(status_code=404)
+        return Response(content=body, media_type="text/html; charset=utf-8",
+                        headers={"Cache-Control": "public, max-age=300"})
+
+    routes.append(("home", home, "home"))
     # HEAD as well as GET: crawlers and SEO tools check pages with HEAD, and
     # a 405 there reads as an error (the server sends headers only).
     for path, handler, name in routes:

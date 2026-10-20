@@ -294,6 +294,21 @@ def test_receiver_advertises_entity_and_router_serves_it():
     app.include_router(create_seo_router(seo, prefix="/seo"))
     response = TestClient(app).get("/seo/entity.json")
     assert response.status_code == 200 and response.json()["facts"]["name"] == "Acme Budget"
+    receiver = PublicationReceiver(store=store, website_id="w", receiver_secret="s" * 40, seo=seo)
+    assert "ai.entity.identity" in receiver.capabilities
+    assert TestClient(app).get("/seo/home").status_code in (200, 404)
+
+
+def test_identity_fields_are_validated():
+    from tekjuice_connector.publication.contract import _parse_discovery
+    from tekjuice_connector.publication.errors import ContractViolationError
+
+    ok = _parse_discovery({"entity": {"name": "Acme", "site_name": "Acme Budget", "alternate_names": ["Acme Budget"],
+                                      "same_as": ["https://x.com/acme"], "logo": "https://site.example/l.png"}})
+    assert ok["entity"]["same_as"] == ["https://x.com/acme"] and ok["entity"]["site_name"] == "Acme Budget"
+    for bad in ({"same_as": ["javascript:alert(1)"]}, {"logo": "data:image/png;base64,AA"}, {"nickname": "x"}):
+        with pytest.raises(ContractViolationError):
+            _parse_discovery({"entity": {"name": "Acme", **bad}})
 
 
 
@@ -308,7 +323,8 @@ def test_software_products_get_software_application_and_verified_offer():
     from tekjuice_connector.publication.seo import entity_json_ld, offers_from_pricing
     entity = {"name": "Acme", "products": ["Acme"], "category": "Personal finance software",
               "features": ["Works in any modern browser"], "pricing": ["Free: £0, free forever"]}
-    org, app = entity_json_ld(entity, site_url="https://site.example/")
+    org, app, site = entity_json_ld(entity, site_url="https://site.example/")
+    assert site["@type"] == "WebSite" and site["name"] == "Acme" and "alternateName" not in site
     assert app["@type"] == "SoftwareApplication" and app["publisher"] == {"@id": org["@id"]}
     assert app["applicationCategory"] == "FinanceApplication" and app["operatingSystem"] == "Web browser"
     assert app["offers"] == {"@type": "Offer", "price": "0", "priceCurrency": "GBP", "url": "https://site.example/"}
@@ -444,3 +460,32 @@ def test_seo_pages_fall_back_when_templates_are_unavailable():
     templated = SeoPages(store, site_url="https://s.example", shell_html=shell,
                          page_templates=lambda: {"article": "<section>{{tekjuice:title}}</section>"}).page("guide")
     assert "<section>Guide</section>" in templated
+
+
+def test_identity_names_profiles_and_logo():
+    from tekjuice_connector.publication.seo import entity_json_ld
+    entity = {"name": "Acme — Acme Budget Planner", "site_name": "Acme Budget Planner",
+              "alternate_names": ["Acme", "Acme Budget Planner"], "logo": "https://site.example/logo.png",
+              "same_as": ["https://www.linkedin.com/company/acme"]}
+    org, site = entity_json_ld(entity, site_url="https://site.example/")
+    assert org["alternateName"] == ["Acme", "Acme Budget Planner"] and org["logo"].endswith("logo.png")
+    assert org["sameAs"] == ["https://www.linkedin.com/company/acme"]
+    assert site["name"] == "Acme Budget Planner" and site["alternateName"] == ["Acme — Acme Budget Planner", "Acme"]
+    assert site["publisher"] == {"@id": org["@id"]}
+
+
+def test_home_page_gets_identity_once():
+    from tekjuice_connector.publication import InMemoryContentStore, PublicationContent, SeoPages
+    store = InMemoryContentStore("https://site.example")
+    store.create(PublicationContent(title="Guide", body="Text.", slug="guide",
+                                    discovery={"entity": {"name": "Acme", "alternate_names": ["Acme Budget Planner"],
+                                                          "site_name": "Acme Budget Planner"}}),
+                 execution_id="e1", idempotency_key="k1")
+    shell = "<!doctype html><html><head><title>Acme</title></head><body><div id='root'></div></body></html>"
+    seo = SeoPages(store, site_url="https://site.example", shell_html=lambda: shell)
+    home = seo.home()
+    assert home.count('data-tekjuice="identity"') == 2 and '"@type": "WebSite"' in home.replace('":"', '": "')
+    assert seo.with_identity(home) == home
+    assert seo.with_identity("<html><head></head><body>x</body></html>").count("</head>") == 1
+    empty = SeoPages(InMemoryContentStore("https://site.example"), site_url="https://site.example", shell_html=lambda: shell)
+    assert empty.home() == shell

@@ -427,6 +427,12 @@ def seo_response(seo: Any, subpath: str) -> tuple:
     if subpath in site_wide:
         method, media = site_wide[subpath]
         return 200, {"Content-Type": media, "Cache-Control": "public, max-age=900"}, method().encode("utf-8")
+    if subpath == "/home":
+        # The site's home page with the business's identity JSON-LD (map the
+        # web server's "/" here, falling back to the site's own page).
+        body = seo.home()
+        return (200, {"Content-Type": "text/html; charset=utf-8", "Cache-Control": "public, max-age=300"},
+                body.encode("utf-8")) if body is not None else not_found
     if subpath == "/entity.json":
         body = seo.entity_json()
         return (200, {"Content-Type": "application/json", "Cache-Control": "public, max-age=900"},

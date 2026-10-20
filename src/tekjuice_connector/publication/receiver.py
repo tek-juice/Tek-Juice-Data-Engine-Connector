@@ -69,6 +69,7 @@ from tekjuice_connector.publication.errors import (
 )
 from tekjuice_connector.publication.contract import (
     CAPABILITY_AI_ENTITY,
+    CAPABILITY_AI_ENTITY_IDENTITY,
     CAPABILITY_AI_FEED,
     CAPABILITY_AI_INDEXNOW,
     CAPABILITY_AI_LLMS_TXT,
@@ -188,7 +189,8 @@ class PublicationReceiver:
         if seo is not None:
             capabilities.add(CAPABILITY_SEO_PRERENDER)
             capabilities.update({CAPABILITY_AI_LLMS_TXT, CAPABILITY_AI_MARKDOWN,
-                                 CAPABILITY_AI_FEED, CAPABILITY_AI_ROBOTS, CAPABILITY_AI_ENTITY})
+                                 CAPABILITY_AI_FEED, CAPABILITY_AI_ROBOTS, CAPABILITY_AI_ENTITY,
+                                 CAPABILITY_AI_ENTITY_IDENTITY})
             # The IndexNow key is derived from the receiver secret, which the
             # Data Engine also holds, so neither side needs configuring.
             if store_supports_site_changes(store):

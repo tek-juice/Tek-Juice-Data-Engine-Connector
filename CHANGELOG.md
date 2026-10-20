@@ -9,6 +9,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-20
+
+### Added
+- Business identity (`ai.entity.identity`): the entity may carry
+  `site_name`, `alternate_names`, `same_as` (https profile links) and
+  `logo`. Organization data gains `alternateName`, `sameAs` and `logo`, and
+  a WebSite node (`name`, `alternateName`) gives search engines the site
+  name to show. Older Data Engines send none of these fields.
+- `SeoPages.with_identity(html)` adds the identity JSON-LD to a page the
+  site renders itself (its home page), once; `SeoPages.home()` and the
+  `/home` route (sidecar and FastAPI adapter) serve the site's shell with it.
+
 ## [0.8.1] — 2026-10-20
 
 ### Fixed

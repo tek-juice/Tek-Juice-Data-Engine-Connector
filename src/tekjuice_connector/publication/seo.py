@@ -161,6 +161,34 @@ def _shows_price(page_text: str, offer: dict) -> bool:
     return "0" in amounts and re.search(r"\bfree\b", page_text) is not None
 
 
+def _alternate_names(entity: dict, *, besides: Optional[str] = None) -> List[str]:
+    """The business's other names (verified by the Data Engine), without the
+    one already used as ``name``."""
+    taken = {(besides or entity.get("name") or "").strip().lower()}
+    out: List[str] = []
+    for name in [entity.get("name"), *(entity.get("alternate_names") or [])]:
+        name = (name or "").strip()
+        if name and name.lower() not in taken:
+            taken.add(name.lower())
+            out.append(name)
+    return out
+
+
+def website_json_ld(entity: dict, *, site_url: str) -> dict:
+    """The WebSite node: search engines take the site name shown in results
+    from it (``name``, then ``alternateName``). ``site_name`` is the name the
+    Data Engine chose to be unmistakable (the business name alone may belong
+    to others)."""
+    base = site_url.rstrip("/")
+    name = entity.get("site_name") or entity["name"]
+    node = {"@context": "https://schema.org", "@type": "WebSite", "@id": base + "/#website",
+            "name": name, "url": base + "/", "publisher": {"@id": base + "/#organization"}}
+    alternates = _alternate_names(entity, besides=name)
+    if alternates:
+        node["alternateName"] = alternates
+    return node
+
+
 def entity_json_ld(entity: dict, *, site_url: str, visible_text: Optional[str] = None) -> List[dict]:
     """Organization and product nodes from the business's verified facts.
 
@@ -178,8 +206,15 @@ def entity_json_ld(entity: dict, *, site_url: str, visible_text: Optional[str] =
     org_id = base + "/#organization"
     org = {"@context": "https://schema.org", "@type": "Organization", "@id": org_id,
            "name": entity["name"], "url": site_url}
+    alternates = _alternate_names(entity)
+    if alternates:
+        org["alternateName"] = alternates
     if entity.get("description"):
         org["description"] = entity["description"]
+    if entity.get("logo"):
+        org["logo"] = entity["logo"]
+    if entity.get("same_as"):
+        org["sameAs"] = list(entity["same_as"])
     if entity.get("locations"):
         org["areaServed"] = entity["locations"]
     nodes = [org]
@@ -217,6 +252,7 @@ def entity_json_ld(entity: dict, *, site_url: str, visible_text: Optional[str] =
         if offer and shows_price:
             node["offers"] = {**offer, "url": site_url}
         nodes.append(node)
+    nodes.append(website_json_ld(entity, site_url=site_url))
     return nodes
 
 
@@ -735,6 +771,38 @@ class SeoPages:
             tags.append(f'<meta name="robots" content="{html.escape(meta["robots"], quote=True)}" />')
         head = "\n".join(tags)
         return page.replace("</head>", head + "\n</head>", 1) if "</head>" in page else head + page
+
+    _IDENTITY_MARK = 'data-tekjuice="identity"'
+
+    def identity_html(self, visible_text: Optional[str] = None) -> str:
+        """The business's identity as JSON-LD script tags (Organization,
+        WebSite and products from the verified facts); empty without facts.
+        With *visible_text*, products and offers the page does not show are
+        left out."""
+        nodes = entity_json_ld(self.entity(), site_url=self._site + "/", visible_text=visible_text)
+        return "\n".join(f'<script type="application/ld+json" {self._IDENTITY_MARK}>{_script_json(node)}</script>'
+                         for node in nodes)
+
+    def with_identity(self, page_html: str) -> str:
+        """*page_html* (typically the home page) with the identity JSON-LD in
+        its head, once. Sites call this where they render their home page;
+        the sidecar serves it at /home."""
+        if self._IDENTITY_MARK in page_html:
+            return page_html
+        visible = re.sub(r"<[^>]+>", " ", re.sub(r"<(script|style)\b.*?</\1>", " ", page_html, flags=re.S | re.I))
+        tags = self.identity_html(visible_text=visible)
+        if not tags:
+            return page_html
+        if re.search(r"</head>", page_html, re.I):
+            return re.sub(r"</head>", lambda _m: tags + "\n</head>", page_html, count=1, flags=re.I)
+        return tags + page_html
+
+    def home(self) -> Optional[str]:
+        """The site's own shell with its identity, for the home page."""
+        try:
+            return self.with_identity(self._shell())
+        except Exception:  # noqa: BLE001 - the web server falls back to the site's page
+            return None
 
     def page(self, slug: str) -> Optional[str]:
         """Complete HTML for a published article, the site's own page with an

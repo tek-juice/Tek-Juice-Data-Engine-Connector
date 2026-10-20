@@ -80,6 +80,11 @@ CAPABILITY_AI_ROBOTS = "ai.robots"
 CAPABILITY_AI_INDEXNOW = "ai.indexnow"
 # The site renders the business's verified facts (content.discovery.entity).
 CAPABILITY_AI_ENTITY = "ai.entity"
+# ...including its identity: preferred site name, alternate names, profiles
+# elsewhere (sameAs) and logo (entity fields site_name, alternate_names,
+# same_as, logo). Older receivers reject these fields, so the Data Engine
+# sends them only to receivers advertising this capability.
+CAPABILITY_AI_ENTITY_IDENTITY = "ai.entity.identity"
 
 SLUG_MAX_LENGTH = 120
 _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -107,8 +112,11 @@ _DISCOVERY_FIELDS = frozenset(
 )
 # The business's verified facts (site-wide): rendered as Organization and
 # product JSON-LD, the llms.txt "About" section and entity.json.
-_ENTITY_TEXT_FIELDS = frozenset({"name", "website", "description", "category", "product_type"})
-_ENTITY_LIST_FIELDS = frozenset({"products", "features", "use_cases", "audiences", "locations", "pricing"})
+_ENTITY_TEXT_FIELDS = frozenset({"name", "website", "description", "category", "product_type",
+                                 "site_name", "logo"})
+_ENTITY_LIST_FIELDS = frozenset({"products", "features", "use_cases", "audiences", "locations", "pricing",
+                                 "alternate_names", "same_as"})
+_ENTITY_URL_FIELDS = ("website", "logo")
 DISCOVERY_MAX_BYTES = 200_000
 _METADATA_FIELDS = frozenset(
     {"content_strategy_id", "opportunity_id", "content_hash"}
@@ -270,9 +278,12 @@ def _parse_discovery(value: Any) -> Optional[Dict[str, Any]]:
             parsed[key] = entity[key]
         for key in _ENTITY_LIST_FIELDS & entity.keys():
             parsed[key] = _str_list(entity[key], f"entity.{key}")
-        website = parsed.get("website", "")
-        if website and not website.startswith(("https://", "http://")):
-            raise ContractViolationError("'content.discovery.entity.website' must be an http(s) URL")
+        for key in _ENTITY_URL_FIELDS:
+            value = parsed.get(key, "")
+            if value and not value.startswith(("https://", "http://")):
+                raise ContractViolationError(f"'content.discovery.entity.{key}' must be an http(s) URL")
+        if any(not u.startswith("https://") for u in parsed.get("same_as", [])):
+            raise ContractViolationError("'content.discovery.entity.same_as' must be https URLs")
         out["entity"] = parsed
     if "json_ld" in data:
         json_ld = data["json_ld"]
