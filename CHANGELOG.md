@@ -9,6 +9,14 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-10-20
+
+### Fixed
+- A redirected article (renamed or consolidated through `site.changes`) is
+  no longer listed in llms.txt, llms-full.txt, feed.json, the hub or the
+  entity data, and its Markdown version is not served: it appears once, at
+  its new address.
+
 ## [0.8.0] — 2026-10-19
 
 ### Added

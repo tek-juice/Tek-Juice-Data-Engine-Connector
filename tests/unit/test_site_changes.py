@@ -67,6 +67,15 @@ def test_redirects_consolidate_without_loops_or_chains(tmp_path):
     assert away.status_code == 422
 
 
+def test_a_redirected_article_is_listed_once_at_its_new_address(tmp_path):
+    _, seo, receiver = _setup(SQLiteContentStore(str(tmp_path / "c.db"), "https://site.example"))
+    assert "old-guide" in seo.llms_txt() and seo.markdown("old-guide")
+    assert _send(receiver, {"type": "redirect", "path": "/old-guide", "target": "/budget-guide"}).status_code == 200
+    for listing in (seo.llms_txt(), seo.llms_full_txt(), seo.feed_json(), seo.sitemap()):
+        assert "old-guide" not in listing and "budget-guide" in listing
+    assert seo.markdown("old-guide") is None and seo.markdown("budget-guide")
+
+
 def test_validation():
     base = "https://site.example"
     with pytest.raises(ContractViolationError):

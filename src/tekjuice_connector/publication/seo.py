@@ -676,8 +676,11 @@ class SeoPages:
     # -- helpers ------------------------------------------------------------
 
     def _published(self) -> List[PublishedPage]:
+        """Published articles, without those redirected elsewhere (a renamed
+        or consolidated article is listed once, at its new address)."""
         lister = getattr(self._store, "list_published", None)
-        return list(lister()) if callable(lister) else []
+        pages = list(lister()) if callable(lister) else []
+        return [p for p in pages if not (self._override("/" + p.slug.strip("/")) or {}).get("redirect")]
 
     def _modified(self, slug: str) -> Optional[datetime]:
         return next((p.updated_at for p in self._published() if p.slug == slug), None)
@@ -768,6 +771,8 @@ class SeoPages:
                           template=self._template("hub"), item_template=self._template("hub_item"))
 
     def markdown(self, slug: str) -> Optional[str]:
+        if self.redirect_for(slug):
+            return None
         content = self._store.get_content(slug)
         if content is None:
             return None
