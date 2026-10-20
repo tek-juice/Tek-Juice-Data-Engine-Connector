@@ -194,3 +194,23 @@ def test_proxy_configs_cover_the_receiver_and_fall_back_to_the_site(tmp_path):
     # Without discoverability only the receiver is proxied.
     config.site_url = None
     assert "www.example.com" not in proxy.nginx(config)
+
+
+def test_content_types_are_configured_from_the_environment(tmp_path, monkeypatch):
+    from tekjuice_connector.publication import InMemoryContentStore
+    from tekjuice_connector.setup import secret_store as secret_store_module
+    from tekjuice_connector.sidecar import Sidecar
+
+    monkeypatch.setattr(secret_store_module, "in_container", lambda: False)
+    config = SidecarConfig.from_env({"TEKJUICE_WEBSITE_ID": "w", "TEKJUICE_CONNECTOR_KEY": "k",
+                                     "TEKJUICE_DATA_ENGINE_URL": "https://engine.example",
+                                     "TEKJUICE_CONTENT_API_URL": "http://backend/tekjuice",
+                                     "TEKJUICE_DATA_DIR": str(tmp_path), "TEKJUICE_CONTENT_TYPES": "product, event",
+                                     "TEKJUICE_OPENAPI_PATH": "/openapi.json",
+                                     "TEKJUICE_DEFAULT_CONTENT_TYPE": "blog_post"})
+    assert config.content_types_allow == ("product", "event") and config.openapi_path == "/openapi.json"
+    sidecar = Sidecar(config, content_store=InMemoryContentStore("https://www.example.com"))
+    assert "publish.content_types" in sidecar.receiver.capabilities
+    described = sidecar.content_types.describe()     # the backend is unreachable: reported, not fatal
+    assert described["default"] == "blog_post" and described["ready"] == ["blog_post"]
+    assert [e.split(":")[0] for e in described["errors"]] == ["content_api", "openapi"]

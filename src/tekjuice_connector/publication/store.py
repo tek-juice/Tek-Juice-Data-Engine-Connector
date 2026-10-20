@@ -62,6 +62,9 @@ class StoredContent:
     idempotency_key: str
     content_hash: str
     published_url: str
+    # Typed content: the record's state on the backend ("published",
+    # "draft", "saved"...) when the backend reports it.
+    state: Optional[str] = None
 
 
 @runtime_checkable

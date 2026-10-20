@@ -55,7 +55,9 @@ from tekjuice_connector.publication.contract import (
     parse_publish_request,
     parse_verify_request,
 )
+from tekjuice_connector.publication.content_types import ContentTypeError
 from tekjuice_connector.publication.errors import (
+    ContentTypeUnavailableError,
     ContentStoreError,
     DuplicateSlugError,
     MalformedRequestError,
@@ -68,6 +70,7 @@ from tekjuice_connector.publication.errors import (
     WebsiteMismatchError,
 )
 from tekjuice_connector.publication.contract import (
+    CAPABILITY_CONTENT_TYPES,
     CAPABILITY_AI_ENTITY,
     CAPABILITY_AI_ENTITY_IDENTITY,
     CAPABILITY_AI_FEED,
@@ -150,6 +153,7 @@ class PublicationReceiver:
         seo: object = None,
         secret_store: object = None,
         performance: object = None,
+        content_types: object = None,
     ) -> None:
         secret = (
             receiver_secret.reveal()
@@ -177,6 +181,9 @@ class PublicationReceiver:
         self._secret_store = secret_store
         self._seo = seo
         self._performance = performance
+        # The backend's content types (content_types.ContentTypeRegistry):
+        # publications naming a content type are routed through it.
+        self._content_types = content_types
         self._lock = threading.Lock()
         self._accepted: Tuple[SecretStr, ...] = (SecretStr(secret),) if secret else ()
         self._loaded_at = 0.0
@@ -184,6 +191,8 @@ class PublicationReceiver:
             self._reload_secrets(force=True)
         self._max_body_bytes = max_body_bytes
         capabilities = set(store_capabilities(store)) | {CAPABILITY_DISCOVERY}
+        if content_types is not None:
+            capabilities.add(CAPABILITY_CONTENT_TYPES)
         # Discoverability is advertised only when the site actually serves
         # it: pass the mounted SeoPages (see publication.seo).
         if seo is not None:
@@ -378,12 +387,16 @@ class PublicationReceiver:
                 CAPABILITY_STATIC_CACHE: "performance controls are not configured on this receiver",
                 CAPABILITY_COMPRESSION: "performance controls are not configured on this receiver",
                 **UNSUPPORTED_REASONS}}
-        return ReceiverResponse(200, {
+        body = {
             "status": "ok", "discovery_version": DISCOVERY_VERSION, "contract_version": CONTRACT_VERSION,
             "contract_versions": sorted(SUPPORTED_CONTRACT_VERSIONS), "website_id": self._website_id,
             "connector_version": __version__, "capabilities": sorted(self.capabilities),
             "capability_details": performance["capabilities"], "unsupported": performance["unsupported"],
-        })
+        }
+        if self._content_types is not None:
+            self._content_types.refresh()   # discovery is on demand: always current
+            body["content_types"] = self._content_types.describe()
+        return ReceiverResponse(200, body)
 
     def _performance_change(self, data: Dict[str, Any]) -> ReceiverResponse:
         request = parse_performance_change(data)
@@ -432,20 +445,25 @@ class PublicationReceiver:
         request = parse_verify_request(data)
         publication = request.publication
 
+        store, capability = self._target(publication)
         if publication.action == ACTION_CREATE:
-            self._require(CAPABILITY_CREATE, ACTION_CREATE)
-            self._resolve_create_target(publication)
+            if capability is None:
+                self._require(CAPABILITY_CREATE, ACTION_CREATE)
+            self._resolve_create_target(publication, store)
         else:
-            self._require(CAPABILITY_UPDATE, ACTION_UPDATE)
-            self._resolve_update_target(publication)
+            if capability is None:
+                self._require(CAPABILITY_UPDATE, ACTION_UPDATE)
+            self._resolve_update_target(publication, store)
 
-        validate = getattr(self._store, "validate", None)
+        validate = getattr(store, "validate", None)
         if callable(validate):
             validate(publication.content)
 
+        typed = {"content_type": capability.name, "public": capability.public} if capability else {}
         return ReceiverResponse(
             200,
             {
+                **typed,
                 "status": "verified",
                 "contract_version": CONTRACT_VERSION,
                 "challenge": request.challenge,
@@ -453,13 +471,28 @@ class PublicationReceiver:
                 "persisted": False,
                 "capabilities": sorted(self.capabilities),
                 "contract_versions": sorted(SUPPORTED_CONTRACT_VERSIONS),
-                "would_publish_url": self._store.public_url(publication.content.slug),
+                "would_publish_url": store.public_url(publication.content.slug),
             },
         )
 
-    def _resolve_create_target(self, request: PublishRequest) -> Optional[StoredContent]:
+    def _target(self, request: PublishRequest) -> Tuple[object, Any]:
+        """(store, capability) for a publication: the classic store when no
+        content type is named, else the named type's store when it is ready."""
+        name = request.content.content_type
+        if name is None:
+            return self._store, None
+        if self._content_types is None:
+            raise ContentTypeUnavailableError(
+                "This receiver has no content types configured (publish.content_types)", content_type=name)
+        try:
+            capability, store = self._content_types.resolve(name, request.action)
+        except ContentTypeError as exc:
+            raise ContentTypeUnavailableError(str(exc), content_type=exc.content_type, reasons=exc.reasons) from exc
+        return store, capability
+
+    def _resolve_create_target(self, request: PublishRequest, store: object) -> Optional[StoredContent]:
         """Return content to overwrite for a create, or None to insert new."""
-        existing = self._store.find_by_slug(request.content.slug)
+        existing = store.find_by_slug(request.content.slug)
         if existing is None:
             return None
         if existing.execution_id == request.execution_id:
@@ -468,65 +501,69 @@ class PublicationReceiver:
             f"Content slug already exists: {request.content.slug}"
         )
 
-    def _resolve_update_target(self, request: PublishRequest) -> StoredContent:
-        existing = self._store.find_by_slug(request.content.slug)
+    def _resolve_update_target(self, request: PublishRequest, store: object) -> StoredContent:
+        existing = store.find_by_slug(request.content.slug)
         if existing is None:
             raise TargetNotFoundError(
                 f"Content slug not found: {request.content.slug}"
             )
         return existing
 
-    def _replay(self, request: PublishRequest) -> Optional[ReceiverResponse]:
-        stored = self._store.find_by_idempotency_key(request.idempotency_key)
+    def _replay(self, request: PublishRequest, store: object, capability: Any) -> Optional[ReceiverResponse]:
+        stored = store.find_by_idempotency_key(request.idempotency_key)
         if stored is None:
             return None
-        return self._published(request, stored, performed="none", replayed=True)
+        return self._published(request, stored, performed="none", replayed=True, capability=capability)
 
     def _create(self, request: PublishRequest) -> ReceiverResponse:
-        self._require(CAPABILITY_CREATE, ACTION_CREATE)
+        store, capability = self._target(request)
+        if capability is None:
+            self._require(CAPABILITY_CREATE, ACTION_CREATE)
 
-        replay = self._replay(request)
+        replay = self._replay(request, store, capability)
         if replay is not None:
             return replay
 
-        existing = self._resolve_create_target(request)
+        existing = self._resolve_create_target(request, store)
 
         if existing is not None:
-            stored = self._write_update(existing, request)
-            return self._published(request, stored, performed="updated")
+            stored = self._write_update(existing, request, store)
+            return self._published(request, stored, performed="updated", capability=capability)
 
         try:
-            stored = self._store.create(
+            stored = store.create(
                 request.content,
                 execution_id=request.execution_id,
                 idempotency_key=request.idempotency_key,
             )
         except DuplicateSlugError:
             # Lost a race for the slug: re-resolve against the winner.
-            replay = self._replay(request)
+            replay = self._replay(request, store, capability)
             if replay is not None:
                 return replay
-            existing = self._resolve_create_target(request)
+            existing = self._resolve_create_target(request, store)
             if existing is None:
                 raise
-            stored = self._write_update(existing, request)
-            return self._published(request, stored, performed="updated")
+            stored = self._write_update(existing, request, store)
+            return self._published(request, stored, performed="updated", capability=capability)
 
-        return self._published(request, stored, performed="created")
+        return self._published(request, stored, performed="created", capability=capability)
 
     def _update(self, request: PublishRequest) -> ReceiverResponse:
-        self._require(CAPABILITY_UPDATE, ACTION_UPDATE)
+        store, capability = self._target(request)
+        if capability is None:
+            self._require(CAPABILITY_UPDATE, ACTION_UPDATE)
 
-        replay = self._replay(request)
+        replay = self._replay(request, store, capability)
         if replay is not None:
             return replay
 
-        existing = self._resolve_update_target(request)
-        stored = self._write_update(existing, request)
-        return self._published(request, stored, performed="updated")
+        existing = self._resolve_update_target(request, store)
+        stored = self._write_update(existing, request, store)
+        return self._published(request, stored, performed="updated", capability=capability)
 
-    def _write_update(self, existing: StoredContent, request: PublishRequest) -> StoredContent:
-        update = getattr(self._store, "update", None)
+    def _write_update(self, existing: StoredContent, request: PublishRequest, store: object) -> StoredContent:
+        update = getattr(store, "update", None)
         if not callable(update):
             raise UnsupportedOperationError(
                 "This receiver's content store cannot overwrite existing content"
@@ -545,12 +582,20 @@ class PublicationReceiver:
         *,
         performed: str,
         replayed: bool = False,
+        capability: Any = None,
     ) -> ReceiverResponse:
         if not isinstance(stored, StoredContent):
             raise PublicationError("Content store did not return StoredContent")
+        # Typed content says what kind of record it is and its state on the
+        # backend: "saved" (no public page, e.g. a newsletter issue), the
+        # backend's own state ("draft", "publish"...), or "published".
+        typed = {} if capability is None else {
+            "content_type": capability.name, "public": capability.public,
+            "state": stored.state or ("published" if capability.public else "saved")}
         return ReceiverResponse(
             200,
             {
+                **typed,
                 "status": "published",
                 "contract_version": CONTRACT_VERSION,
                 "action": request.action,

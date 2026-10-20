@@ -84,6 +84,15 @@ class SidecarConfig:
     # at /articles). Needs no code in the backend: the proxy sends that path
     # and the receiver route to the connector.
     articles_url: Optional[str] = None
+    # Content types (publish.content_types): the classic store's type name,
+    # an allow-list enabling discovered types, the backend's OpenAPI document
+    # (a path on the content API host) and WordPress REST.
+    default_content_type: str = "article"
+    content_types_allow: tuple = ()
+    openapi_path: Optional[str] = None
+    wordpress_url: Optional[str] = None
+    wordpress_user: Optional[str] = None
+    wordpress_app_password: Optional[str] = None
 
     @property
     def standalone(self) -> bool:
@@ -140,6 +149,13 @@ class SidecarConfig:
             tls_cert_file=Path(env["TEKJUICE_TLS_CERT_FILE"]) if env.get("TEKJUICE_TLS_CERT_FILE") else None,
             tls_key_file=Path(env["TEKJUICE_TLS_KEY_FILE"]) if env.get("TEKJUICE_TLS_KEY_FILE") else None,
             articles_url=_articles_url(env.get("TEKJUICE_ARTICLES_URL")),
+            default_content_type=env.get("TEKJUICE_DEFAULT_CONTENT_TYPE") or "article",
+            content_types_allow=tuple(t.strip() for t in (env.get("TEKJUICE_CONTENT_TYPES") or "").split(",")
+                                      if t.strip()),
+            openapi_path=env.get("TEKJUICE_OPENAPI_PATH") or None,
+            wordpress_url=env.get("TEKJUICE_WORDPRESS_URL") or None,
+            wordpress_user=env.get("TEKJUICE_WORDPRESS_USER") or None,
+            wordpress_app_password=secret("TEKJUICE_WORDPRESS_APP_PASSWORD"),
         )
 
 
@@ -219,8 +235,10 @@ class Sidecar:
                 site_description=config.site_description, private_paths=config.private_paths,
                 hub_path=config.hub_path, hub_title=config.hub_title, hub_description=config.hub_description,
             )
+        self.content_types = self._content_types(config, self.content_store)
         self.receiver = PublicationReceiver(store=self.content_store, website_id=config.website_id,
-                                            secret_store=self.secret_store, seo=self.seo)
+                                            secret_store=self.secret_store, seo=self.seo,
+                                            content_types=self.content_types)
         self._setup_options = setup_options or {}
         self._retry_delays = retry_delays
         self._tls_reload_interval = tls_reload_interval
@@ -228,6 +246,34 @@ class Sidecar:
         self._stop = threading.Event()
         self._server: Optional[ThreadingHTTPServer] = None
         self._setup_thread: Optional[threading.Thread] = None
+
+    @staticmethod
+    def _content_types(config: SidecarConfig, store: Any) -> Any:
+        """The capability map: the classic store as the default type, plus
+        the types the content API manifest, the OpenAPI document and
+        WordPress describe (each read on demand, cached for a while)."""
+        from tekjuice_connector.publication.content_sources import (
+            content_api_source,
+            native_source,
+            openapi_source,
+            wordpress_source,
+        )
+        from tekjuice_connector.publication.content_types import ContentTypeRegistry
+
+        ledger = str(config.data_dir / "content-types.sqlite3")
+        name = config.default_content_type
+        sources = [native_source(store, name=name, label=name.replace("_", " ").title())]
+        if config.content_api_url:
+            sources.append(content_api_source(config.content_api_url, ledger_path=ledger,
+                                              token=config.content_api_token))
+            if config.openapi_path:
+                sources.append(openapi_source(config.content_api_url, document_path=config.openapi_path,
+                                              ledger_path=ledger, token=config.content_api_token))
+        if config.wordpress_url and config.wordpress_user and config.wordpress_app_password:
+            sources.append(wordpress_source(config.wordpress_url, username=config.wordpress_user,
+                                            application_password=config.wordpress_app_password,
+                                            ledger_path=ledger))
+        return ContentTypeRegistry(sources, default=name, allow=config.content_types_allow)
 
     @staticmethod
     def _standalone(config: SidecarConfig) -> tuple:

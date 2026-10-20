@@ -89,6 +89,7 @@ CAPABILITY_AI_ENTITY_IDENTITY = "ai.entity.identity"
 SLUG_MAX_LENGTH = 120
 _SLUG_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 _SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_CONTENT_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_.-]{0,62}$")
 
 _PUBLISH_FIELDS = frozenset(
     {
@@ -102,8 +103,14 @@ _PUBLISH_FIELDS = frozenset(
     }
 )
 _CONTENT_FIELDS = frozenset(
-    {"title", "body", "slug", "excerpt", "meta_description", "meta_keywords", "discovery"}
+    {"title", "body", "slug", "excerpt", "meta_description", "meta_keywords", "discovery",
+     # Typed content (publish.content_types): which of the backend's content
+     # types, and that type's structured values. Absent: the default type.
+     "content_type", "fields"}
 )
+# Receivers advertising this accept content.content_type / content.fields.
+CAPABILITY_CONTENT_TYPES = "publish.content_types"
+FIELDS_MAX_BYTES = 200_000
 # content.discovery: answer/generative-engine material computed by the Data
 # Engine. Optional; sent only to receivers advertising publish.discovery.
 _DISCOVERY_FIELDS = frozenset(
@@ -139,19 +146,27 @@ class PublicationContent:
     # GEO/AEO material (summary, key_takeaways, entities, direct_answer, faq,
     # citations, json_ld, language). Not part of the content hash.
     discovery: Optional[Dict[str, Any]] = field(default=None, compare=False)
+    # Typed content: the backend content type (None: the receiver's default)
+    # and its structured values.
+    content_type: Optional[str] = None
+    fields: Optional[Dict[str, Any]] = None
 
     def content_hash(self) -> str:
-        """SHA-256 over the canonical content string (matches the Data Engine)."""
-        canonical = "\n".join(
-            [
-                self.title,
-                self.body,
-                self.slug,
-                self.excerpt or "",
-                self.meta_description or "",
-                ",".join(self.meta_keywords),
-            ]
-        )
+        """SHA-256 over the canonical content string (matches the Data Engine).
+        The content type and fields count only when present, so untyped
+        content hashes as before."""
+        parts = [
+            self.title,
+            self.body,
+            self.slug,
+            self.excerpt or "",
+            self.meta_description or "",
+            ",".join(self.meta_keywords),
+        ]
+        if self.content_type or self.fields:
+            parts += [self.content_type or "",
+                      json.dumps(self.fields or {}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)]
+        canonical = "\n".join(parts)
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
@@ -323,7 +338,25 @@ def parse_publish_request(data: Any) -> PublishRequest:
 
     discovery = _parse_discovery(content_data.get("discovery"))
 
+    content_type = _optional_str(content_data, "content_type", "content")
+    if content_type is not None and not _CONTENT_TYPE_PATTERN.fullmatch(content_type):
+        raise ContractViolationError(
+            "'content.content_type' must be a lowercase name (letters, digits, '_', '-', '.'), "
+            f"got {content_type!r}")
+    fields = content_data.get("fields")
+    if fields is not None:
+        if not isinstance(fields, dict) or not all(isinstance(k, str) and k for k in fields):
+            raise ContractViolationError("'content.fields' must be an object with named fields")
+        try:
+            size = len(json.dumps(fields))
+        except (TypeError, ValueError) as exc:
+            raise ContractViolationError("'content.fields' must be JSON values") from exc
+        if size > FIELDS_MAX_BYTES:
+            raise ContractViolationError(f"'content.fields' exceeds {FIELDS_MAX_BYTES} bytes")
+
     content = PublicationContent(
+        content_type=content_type,
+        fields=fields,
         discovery=discovery,
         title=_require_str(content_data, "title", "content"),
         body=_require_str(content_data, "body", "content"),

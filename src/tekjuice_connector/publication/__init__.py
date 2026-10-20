@@ -15,7 +15,21 @@ Then mount it with the adapter for your framework, e.g.
 the public endpoint URL through the connector handshake.
 """
 
+from tekjuice_connector.publication.content_sources import (
+    RestResourceStore,
+    capabilities_from_openapi,
+    content_api_source,
+    native_source,
+    openapi_source,
+    wordpress_source,
+)
+from tekjuice_connector.publication.content_types import (
+    ContentTypeCapability,
+    ContentTypeRegistry,
+    FieldSpec,
+)
 from tekjuice_connector.publication.contract import (
+    CAPABILITY_CONTENT_TYPES,
     CAPABILITY_CREATE,
     CAPABILITY_SEO_PRERENDER,
     CAPABILITY_SEO_SITEMAP,
@@ -36,6 +50,7 @@ from tekjuice_connector.publication.errors import (
 )
 from tekjuice_connector.publication.receiver import PublicationReceiver, ReceiverResponse
 from tekjuice_connector.publication.registration import PublicationRegistration
+from tekjuice_connector.publication.schema_mapping import map_publication
 from tekjuice_connector.publication.seo import (
     AI_CRAWLERS,
     PublishedPage,
@@ -56,6 +71,17 @@ from tekjuice_connector.publication.store import (
 )
 
 __all__ = [
+    "CAPABILITY_CONTENT_TYPES",
+    "ContentTypeCapability",
+    "ContentTypeRegistry",
+    "FieldSpec",
+    "RestResourceStore",
+    "capabilities_from_openapi",
+    "content_api_source",
+    "map_publication",
+    "native_source",
+    "openapi_source",
+    "wordpress_source",
     "CAPABILITY_CREATE",
     "CAPABILITY_SEO_PRERENDER",
     "CAPABILITY_SEO_SITEMAP",

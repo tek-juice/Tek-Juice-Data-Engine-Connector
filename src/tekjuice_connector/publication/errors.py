@@ -109,6 +109,40 @@ class UnsupportedCapabilityError(UnsupportedOperationError):
         return body
 
 
+class ContentTypeUnavailableError(UnsupportedOperationError):
+    """The publication names a content type the backend does not offer, or
+    one that is not ready (permanent: the body says what is missing)."""
+
+    code = "content_type_unavailable"
+
+    def __init__(self, message: str, *, content_type: str, reasons=()) -> None:
+        super().__init__(message)
+        self.content_type = content_type
+        self.reasons = [str(r)[:300] for r in reasons][:10]
+
+    def to_response_body(self) -> Dict[str, Any]:
+        body = super().to_response_body()
+        body["error"]["content_type"] = self.content_type
+        body["error"]["reasons"] = self.reasons
+        return body
+
+
+class ContentMappingError(ContractViolationError):
+    """The content cannot be mapped to the destination schema; nothing was
+    written. The body carries the mapping report."""
+
+    code = "content_mapping_failed"
+
+    def __init__(self, message: str, *, report: Dict[str, Any]) -> None:
+        super().__init__(message)
+        self.report = report
+
+    def to_response_body(self) -> Dict[str, Any]:
+        body = super().to_response_body()
+        body["error"]["mapping"] = self.report
+        return body
+
+
 class ContentStoreError(PublicationError):
     """The customer's content store failed transiently (safe to retry)."""
 

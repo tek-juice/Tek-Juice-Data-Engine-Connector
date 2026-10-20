@@ -102,6 +102,12 @@ def _build_parser() -> argparse.ArgumentParser:
     proxy_p.add_argument("--site-upstream", default="http://127.0.0.1:3000", help="Where your website is served.")
     proxy_p.add_argument("--template", help="Public URL template of articles (default: TEKJUICE_PUBLIC_URL_TEMPLATE).")
 
+    content_types_p = subparsers.add_parser(
+        "content-types",
+        help="Show the backend's content types: discovered, validated, ready, and what is missing.",
+    )
+    content_types_p.add_argument("--json", action="store_true", help="Print the capability map as JSON.")
+
     subparsers.add_parser(
         "check-content-api",
         help="Non-mutating conformance checks of the backend's content API (sidecar configuration).",
@@ -171,6 +177,10 @@ def main(argv: list[str] | None = None) -> int:
         from tekjuice_connector.cli.proxy_config import run_proxy_config
         return run_proxy_config(flavour=args.flavour, upstream=args.upstream, site_upstream=args.site_upstream,
                                 template=args.template)
+
+    if args.command == "content-types":
+        from tekjuice_connector.cli.content_types import run_content_types
+        return run_content_types(as_json=args.json)
 
     if args.command == "check-content-api":
         from tekjuice_connector.cli.check_content_api import run_check_content_api

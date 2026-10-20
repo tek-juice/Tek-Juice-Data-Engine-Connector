@@ -44,18 +44,18 @@ docker run -d --name tekjuice-connector --restart unless-stopped \
   -e TEKJUICE_API_BASE_URL=https://api.example.com \
   -e TEKJUICE_CONTENT_API_URL=http://backend:3000/tekjuice \
   -e TEKJUICE_CONTENT_API_TOKEN_FILE=/run/secrets/tekjuice_content_api_token \
-  tekjuice-connector:0.9.0
+  tekjuice-connector:0.10.0
 ```
 
 Get the image by building it straight from the public repository (no
 registry login, any machine with Docker; pin the release tag):
 
 ```bash
-docker build -t tekjuice-connector:0.9.0 \
-  "https://github.com/tek-juice/Tek-Juice-Data-Engine-Connector.git#v0.9.0"
+docker build -t tekjuice-connector:0.10.0 \
+  "https://github.com/tek-juice/Tek-Juice-Data-Engine-Connector.git#v0.10.0"
 ```
 
-and use `tekjuice-connector:0.9.0` as the image name above. Releases are
+and use `tekjuice-connector:0.10.0` as the image name above. Releases are
 also pushed to `ghcr.io/tek-juice/tekjuice-connector:<version>` (linux/amd64
 and linux/arm64); pulling from there works without a login only once the
 package is public.
@@ -90,6 +90,10 @@ location = /tekjuice/publish {
 | `TEKJUICE_DATA_DIR` | no | `/var/lib/tekjuice`: receiver secret and ledger. **Use a named volume.** |
 | `TEKJUICE_LISTEN` | no | `0.0.0.0:8787` |
 | `TEKJUICE_ALLOW_ENDPOINT_CHANGE` | no | `1` to move an already verified registration to a new endpoint |
+| `TEKJUICE_DEFAULT_CONTENT_TYPE` | no | Name of the content type your `/content` routes store (`article`) |
+| `TEKJUICE_CONTENT_TYPES` | no | Allow-list enabling discovered content types, e.g. `product,event` ([content types](content-types.md)) |
+| `TEKJUICE_OPENAPI_PATH` | no | Path of your OpenAPI 3 document on the content API host, e.g. `/openapi.json` |
+| `TEKJUICE_WORDPRESS_URL`, `_USER`, `_APP_PASSWORD` / `_FILE` | no | WordPress REST discovery with an application password |
 
 `_FILE` variants read Docker or Kubernetes secret files.
 

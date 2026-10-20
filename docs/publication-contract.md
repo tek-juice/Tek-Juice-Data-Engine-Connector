@@ -80,6 +80,7 @@ fetches this URL and requires the title there before reporting `verified`.
 | `publish.create` | accepts `action: create` | always (store implements `create`) |
 | `publish.update` | accepts `action: update` | store implements `update` |
 | `publish.verify` | accepts `action: verify` dry runs | always |
+| `publish.content_types` | accepts `content.content_type` and `content.fields`, and reports its content types in the `capabilities` action ([content types](content-types.md)) | a content type registry is configured (0.10.0+) |
 
 The Data Engine requires `publish.create` and `publish.verify`, and contract
 version `1.0`, before it will attempt verification.
@@ -118,6 +119,18 @@ Validation (all failures are `422`, never retried):
 - `content_hash`, when present, must equal SHA-256 of
   `title \n body \n slug \n excerpt \n meta_description \n keywords-joined-by-comma`
   (absent optional values as empty strings).
+
+### Typed content (0.10.0+)
+
+Receivers advertising `publish.content_types` accept two optional content
+fields: `content_type` (one of the backend's content types, lowercase name)
+and `fields` (that type's structured values, a JSON object up to 200 KB).
+When either is present the content hash appends two lines, the content type
+and the canonical JSON of `fields` (sorted keys, no spaces); otherwise the
+hash is unchanged. The response then adds `content_type`, `public` and
+`state`; `published_url` is empty for types without a public page. See
+[content types](content-types.md) for discovery, mapping and errors
+(`content_type_unavailable`, `content_mapping_failed`).
 
 ### Content identity and semantics
 

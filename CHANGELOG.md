@@ -9,6 +9,27 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-21
+
+### Added
+- Content types (`publish.content_types`, docs/content-types.md): the
+  receiver discovers the content types a backend offers (its content store;
+  the content API manifest; an OpenAPI 3 document; WordPress REST), keeps a
+  capability map with a status per type (discovered, validated, authorized,
+  ready, unsupported) and publishes a publication naming `content_type` to
+  that type only when it is ready. Contents are mapped to the type's schema
+  (explicit `fields`, `field_map`, semantic equivalents, type checks); a
+  publication that does not fit is refused with a mapping report and nothing
+  is written. Only create and update are ever performed.
+- The `capabilities` action reports the capability map (no credentials, no
+  backend addresses); `tekjuice content-types` prints it.
+- New errors: `content_type_unavailable`, `content_mapping_failed`.
+
+### Unchanged
+- Publications without `content_type`, the handshake, ownership
+  verification, the receiver secret, contract 1.0, the content hash of
+  untyped content and idempotency behave exactly as in 0.9.0.
+
 ## [0.9.0] — 2026-10-20
 
 ### Added

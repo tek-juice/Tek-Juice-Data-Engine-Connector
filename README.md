@@ -160,6 +160,7 @@ settings (static-asset caching, compression) without code changes; see
 
 - [Installation](docs/installation.md)
 - [Sidecar for any language](docs/sidecar.md) and its [content API](docs/content-api.openapi.yaml)
+- [Content types: products, events, newsletters, custom types (0.10.0+)](docs/content-types.md)
 - [Setup (secret, endpoint, registration, rotation)](docs/setup.md)
 - [Configuration](docs/configuration.md)
 - [Authentication](docs/authentication.md)
