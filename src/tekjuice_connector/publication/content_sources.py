@@ -477,6 +477,9 @@ def openapi_source(base_url: str, *, document: Optional[Dict[str, Any]] = None, 
         if doc is None:
             headers = {"Accept": "application/json", **({"Authorization": auth} if auth else {})}
             status, doc = call("GET", base + safe_path(document_path), headers, None, timeout)
+            if status in (401, 403):
+                raise ContentSourceError(f"The backend refused the credential for its OpenAPI document "
+                                         f"(HTTP {status})")
             if status != 200 or not isinstance(doc, dict):
                 raise ContentSourceError(f"The OpenAPI document was not found (HTTP {status})")
         if not str(doc.get("openapi") or "").startswith("3"):

@@ -8,7 +8,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tekjuice-connector"
-version = "0.10.0"
+version = "0.10.1"
 description = "Tek Juice Data Engine Connector — customer backend authentication, connection and S2S content publication."
 readme = "README.md"
 license = { file = "LICENSE" }

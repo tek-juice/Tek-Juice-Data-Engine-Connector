@@ -1,0 +1,23 @@
+{
+  "openapi": "3.0.3",
+  "info": {"title": "Shop (Laravel)", "version": "1.0.0"},
+  "components": {"schemas": {
+    "PostInput": {"type": "object", "required": ["title", "slug", "body"], "properties": {
+      "title": {"type": "string", "maxLength": 120}, "slug": {"type": "string"},
+      "body": {"type": "string", "format": "html"}, "excerpt": {"type": "string", "nullable": true},
+      "status": {"type": "string", "enum": ["draft", "published"]}}},
+    "ProductInput": {"type": "object", "required": ["name", "slug", "price", "sku"], "properties": {
+      "name": {"type": "string"}, "slug": {"type": "string"}, "description": {"type": "string", "format": "html"},
+      "price": {"type": "number", "minimum": 0}, "sku": {"type": "string"}}}}},
+  "paths": {
+    "/posts": {
+      "get": {"summary": "List posts"},
+      "post": {"summary": "Blog posts", "x-tekjuice-content-type": {"name": "post"},
+               "requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/PostInput"}}}}}},
+    "/posts/{post}": {"get": {}, "put": {}, "patch": {}},
+    "/products": {
+      "get": {},
+      "post": {"requestBody": {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProductInput"}}}}}},
+    "/products/{product}": {"put": {}, "patch": {}}
+  }
+}

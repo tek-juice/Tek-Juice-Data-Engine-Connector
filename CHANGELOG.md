@@ -9,6 +9,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-10-21
+
+### Added
+- `examples/laravel/`: a real Laravel application (posts and products API
+  resources, validation rules, JSON resources, OpenAPI) and
+  `tests/integration/test_content_types_laravel.py`, run against it
+  (docs/content-types.md, "Validating against Laravel").
+
+### Fixed
+- A backend refusing the credential for its OpenAPI document is reported as
+  such (was "document not found").
+
 ## [0.10.0] — 2026-10-21
 
 ### Added

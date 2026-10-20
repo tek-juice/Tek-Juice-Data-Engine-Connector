@@ -258,6 +258,27 @@ changing the connector.
   when a publication names them (`content_type` and `fields` in the
   publication package). A generator for each kind of content is not part of
   this release.
-- Real-backend tests run against two Node.js backends with different
-  conventions (a Laravel-style API described by OpenAPI, and a content API
-  manifest). Validation against a real Laravel application is the next step.
+
+## Validating against Laravel
+
+`examples/laravel/` holds a real Laravel application's own files (an API
+token middleware, `posts` and `products` migrations, Eloquent models,
+controllers with `$request->validate()` rules, a JSON resource, `routes/api.php`
+and an OpenAPI 3 document enabling only posts). `examples/laravel/run.sh`
+creates a fresh Laravel app with Composer in Docker, adds those files and
+serves it; `tests/integration/test_content_types_laravel.py` then checks,
+against it:
+
+- discovery: posts `ready` (identity `id`, Laravel's required fields), products
+  `validated` but not enabled;
+- a post created through `POST /api/posts`, updated through `PUT /api/posts/{id}`,
+  a retry creating nothing, Laravel's default `status` kept;
+- Laravel's own 422 messages (`The slug has already been taken.`) reported,
+  and another post with that slug never overwritten;
+- schema limits (`max:120`, the `status` enum) refused before Laravel is called;
+- products refused until enabled with `TEKJUICE_CONTENT_TYPES`, then created
+  with Laravel's rules (a missing `sku` refused first);
+- a wrong token refused by Laravel and reported.
+
+Other backends are checked by `tests/integration/test_content_types_real_backends.py`
+(two Node.js backends with different conventions) and the unit tests.

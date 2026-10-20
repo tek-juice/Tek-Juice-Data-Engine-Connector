@@ -62,3 +62,4 @@ dmypy.json
 
 # Distribution / packaging
 CHANGELOG.md.bak
+.laravel-test/

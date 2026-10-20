@@ -44,18 +44,18 @@ docker run -d --name tekjuice-connector --restart unless-stopped \
   -e TEKJUICE_API_BASE_URL=https://api.example.com \
   -e TEKJUICE_CONTENT_API_URL=http://backend:3000/tekjuice \
   -e TEKJUICE_CONTENT_API_TOKEN_FILE=/run/secrets/tekjuice_content_api_token \
-  tekjuice-connector:0.10.0
+  tekjuice-connector:0.10.1
 ```
 
 Get the image by building it straight from the public repository (no
 registry login, any machine with Docker; pin the release tag):
 
 ```bash
-docker build -t tekjuice-connector:0.10.0 \
-  "https://github.com/tek-juice/Tek-Juice-Data-Engine-Connector.git#v0.10.0"
+docker build -t tekjuice-connector:0.10.1 \
+  "https://github.com/tek-juice/Tek-Juice-Data-Engine-Connector.git#v0.10.1"
 ```
 
-and use `tekjuice-connector:0.10.0` as the image name above. Releases are
+and use `tekjuice-connector:0.10.1` as the image name above. Releases are
 also pushed to `ghcr.io/tek-juice/tekjuice-connector:<version>` (linux/amd64
 and linux/arm64); pulling from there works without a login only once the
 package is public.
