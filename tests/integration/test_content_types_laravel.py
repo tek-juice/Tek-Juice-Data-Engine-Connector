@@ -123,3 +123,40 @@ def test_a_wrong_token_is_refused_by_laravel(tmp_path):
                                    default=None)
     described = registry.describe()
     assert described["types"] == [] and "refused the credential" in described["errors"][0]
+
+
+def _inventory(receiver, content_type, page=1, limit=100):
+    return send(receiver, {"contract_version": "1.0", "action": "content_inventory", "website_id": WEBSITE_ID,
+                           "content_type": content_type, "page": page, "limit": limit})
+
+
+def test_the_owners_own_laravel_posts_are_listed_and_improved(tmp_path):
+    receiver = _receiver(tmp_path)
+    slug = _slug("owner-post")
+    made = _api("POST", "/posts", {"title": "Mugs", "slug": slug, "body": "<p>We sell mugs.</p>"}).json()["data"]
+    listed = _inventory(receiver, "post")
+    assert listed.status_code == 200, listed.body
+    item = next(i for i in listed.body["items"] if i["slug"] == slug)
+    assert item["resource_id"] == str(made["id"]) and item["values"]["title"] == "Mugs"
+    assert item["url"] == f"https://shop.example/blog/{slug}"
+
+    change = {"contract_version": "1.0", "action": "record_update", "website_id": WEBSITE_ID,
+              "idempotency_key": f"improve-{slug}", "content_type": "post", "resource_id": item["resource_id"],
+              "changes": {"title": "Stoneware Mugs Made in Kampala"}, "expected": {"title": "Mugs"}}
+    done = send(receiver, change)
+    assert done.status_code == 200, done.body
+    assert done.body["previous"] == {"title": "Mugs"}
+    after = _api("GET", f"/posts/{made['id']}").json()["data"]
+    assert after["title"] == "Stoneware Mugs Made in Kampala" and after["body"] == "<p>We sell mugs.</p>"
+
+    # The owner edits it again; an older proposal must not overwrite that.
+    _api("PUT", f"/posts/{made['id']}", {"title": "Mugs by Hand"})
+    stale = send(receiver, {**change, "idempotency_key": f"improve2-{slug}",
+                            "changes": {"title": "Another title"}, "expected": {"title": "Stoneware Mugs Made in Kampala"}})
+    assert stale.status_code == 409 and stale.body["error"]["code"] == "record_changed"
+    assert _api("GET", f"/posts/{made['id']}").json()["data"]["title"] == "Mugs by Hand"
+
+
+def test_products_without_a_show_route_are_not_improvable(tmp_path):
+    response = _inventory(_receiver(tmp_path, allow=["product"]), "product")
+    assert response.status_code == 422 and "no list, read and update" in response.body["error"]["message"]

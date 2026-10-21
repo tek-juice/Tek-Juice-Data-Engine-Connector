@@ -56,6 +56,13 @@ from tekjuice_connector.publication.contract import (
     parse_verify_request,
 )
 from tekjuice_connector.publication.content_types import ContentTypeError
+from tekjuice_connector.publication.records import (
+    ACTION_CONTENT_INVENTORY,
+    ACTION_RECORD_UPDATE,
+    CAPABILITY_CONTENT_RECORDS,
+    parse_inventory,
+    parse_record_update,
+)
 from tekjuice_connector.publication.errors import (
     ContentTypeUnavailableError,
     ContentStoreError,
@@ -192,7 +199,7 @@ class PublicationReceiver:
         self._max_body_bytes = max_body_bytes
         capabilities = set(store_capabilities(store)) | {CAPABILITY_DISCOVERY}
         if content_types is not None:
-            capabilities.add(CAPABILITY_CONTENT_TYPES)
+            capabilities.update({CAPABILITY_CONTENT_TYPES, CAPABILITY_CONTENT_RECORDS})
         # Discoverability is advertised only when the site actually serves
         # it: pass the mounted SeoPages (see publication.seo).
         if seo is not None:
@@ -361,6 +368,10 @@ class PublicationReceiver:
             return self._capabilities(data)
         if action == ACTION_PERFORMANCE_CHANGE:
             return self._performance_change(data)
+        if action == ACTION_CONTENT_INVENTORY:
+            return self._content_inventory(data)
+        if action == ACTION_RECORD_UPDATE:
+            return self._record_update(data)
 
         request = parse_publish_request(data)
         if request.action == ACTION_CREATE:
@@ -397,6 +408,36 @@ class PublicationReceiver:
             self._content_types.refresh()   # discovery is on demand: always current
             body["content_types"] = self._content_types.describe()
         return ReceiverResponse(200, body)
+
+    def _records(self, name: str) -> Any:
+        if self._content_types is None:
+            raise ContentTypeUnavailableError(
+                "This receiver has no content types configured (content.records)", content_type=name)
+        try:
+            return self._content_types.records(name)[1]
+        except ContentTypeError as exc:
+            raise ContentTypeUnavailableError(str(exc), content_type=exc.content_type, reasons=exc.reasons) from exc
+
+    def _content_inventory(self, data: Dict[str, Any]) -> ReceiverResponse:
+        """One page of a content type's existing records (writes nothing)."""
+        request = parse_inventory(data)
+        store = self._records(request["content_type"])
+        items, more = store.list_records(page=request["page"], limit=request["limit"])
+        return ReceiverResponse(200, {"status": "ok", "contract_version": CONTRACT_VERSION,
+                                      "website_id": self._website_id, "content_type": request["content_type"],
+                                      "page": request["page"], "more": more, "items": items})
+
+    def _record_update(self, data: Dict[str, Any]) -> ReceiverResponse:
+        """Change named fields of one existing record (never a concurrent edit)."""
+        request = parse_record_update(data)
+        store = self._records(request["content_type"])
+        result = store.update_record(resource_id=request["resource_id"], slug=request["slug"],
+                                     changes=request["changes"], expected=request["expected"],
+                                     idempotency_key=request["idempotency_key"])
+        _log.info("Record updated: %s %s (replayed=%s)", request["content_type"],
+                  request["resource_id"] or request["slug"], result.get("replayed"))
+        return ReceiverResponse(200, {**result, "contract_version": CONTRACT_VERSION, "website_id": self._website_id,
+                                      "idempotency_key": request["idempotency_key"]})
 
     def _performance_change(self, data: Dict[str, Any]) -> ReceiverResponse:
         request = parse_performance_change(data)

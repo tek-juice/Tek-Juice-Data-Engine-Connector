@@ -36,7 +36,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from tekjuice_connector.publication.content_types import (
     ContentTypeCapability,
@@ -63,6 +63,7 @@ _PLACEHOLDER = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 WORDPRESS_INTERNAL_TYPES = frozenset({"attachment", "nav_menu_item", "wp_block", "wp_template", "wp_template_part",
                                       "wp_navigation", "wp_global_styles", "wp_font_family", "wp_font_face"})
 HTTP_METHODS = ("get", "post", "put", "patch", "delete")
+RECORD_TEXT_MAX = 50_000
 
 
 class ContentSourceError(PublicationError):
@@ -171,13 +172,15 @@ class RestResourceStore:
         return self._base + _PLACEHOLDER.sub(fill, endpoint.path)
 
     def _call(self, operation: str, values: Dict[str, str], body: Optional[Dict[str, Any]] = None,
-              idempotency_key: Optional[str] = None) -> Tuple[int, Any]:
+              idempotency_key: Optional[str] = None, query: Optional[Dict[str, Any]] = None) -> Tuple[int, Any]:
         endpoint = self.capability.operations.get(operation)
         if endpoint is None:
             raise ContentSourceError(f"'{self.capability.name}' has no {operation} operation")
+        url = self._url(endpoint, values)
+        if query:
+            url += ("&" if "?" in url else "?") + urlencode(query)
         try:
-            status, data = self._request(endpoint.method, self._url(endpoint, values),
-                                         self._headers(idempotency_key), body, self._timeout)
+            status, data = self._request(endpoint.method, url, self._headers(idempotency_key), body, self._timeout)
         except PublicationError:
             raise
         except Exception as exc:  # noqa: BLE001 - transport failures are transient
@@ -283,8 +286,159 @@ class RestResourceStore:
             if status not in (200, 404):
                 raise ContentStoreError(f"The backend answered HTTP {status} to a read")
 
+    # Existing records (content inventory and record updates) -----------
+
+    def supports_records(self) -> bool:
+        """The backend lists its records, returns one, and updates one."""
+        ops = self.capability.operations
+        return "list" in ops and "retrieve" in ops and ("patch" in ops or "update" in ops)
+
+    def _values(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        """A record's values for the type's schema fields (WordPress
+        {raw, rendered} objects as their raw text; long text cut)."""
+        out: Dict[str, Any] = {}
+        for spec in self.capability.fields:
+            if spec.name not in record:
+                continue
+            value = record[spec.name]
+            if isinstance(value, dict) and ("raw" in value or "rendered" in value):
+                value = value.get("raw") if value.get("raw") is not None else value.get("rendered")
+            if isinstance(value, str) and len(value) > RECORD_TEXT_MAX:
+                value = value[:RECORD_TEXT_MAX]
+            out[spec.name] = value
+        return out
+
+    def _summary(self, record: Dict[str, Any]) -> Dict[str, Any]:
+        rid = record.get("id") if record.get("id") is not None else record.get("uuid") or record.get("_id")
+        slug = record.get("slug") or record.get("handle")
+        url = _rendered(record.get("url") or record.get("link") or record.get("permalink")
+                        or record.get("public_url")) or ""
+        if not url and self.capability.public and self.capability.public_url_template and (slug or rid):
+            url = self.capability.public_url_template.replace("{slug}", str(slug or "")).replace("{id}", str(rid))
+        return {"resource_id": str(rid) if rid is not None else None, "slug": slug,
+                "url": url if self.capability.public else "",
+                "updated_at": record.get("updated_at") or record.get("modified_gmt") or record.get("modified"),
+                "values": self._values(record)}
+
+    def list_records(self, *, page: int = 1, limit: int = 50) -> Tuple[List[Dict[str, Any]], bool]:
+        """One page of the backend's existing records: ([summary], more)."""
+        paging = self.capability.workflow.get("pagination") or {}
+        query = {paging.get("page", "page"): page, paging.get("limit", "per_page"): limit}
+        if self.capability.adapter == "wordpress":
+            query["context"] = "edit"
+        status, data = self._call("list", {}, query=query)
+        if status == 400 and self.capability.adapter == "wordpress":   # past the last page
+            return [], False
+        if status != 200:
+            raise ContentStoreError(f"The backend answered HTTP {status} to a list of '{self.capability.name}'")
+        items = data if isinstance(data, list) else next(
+            (data[k] for k in ("data", "items", "results", "records") if isinstance(data, dict)
+             and isinstance(data.get(k), list)), [])
+        meta = data.get("meta") if isinstance(data, dict) and isinstance(data.get("meta"), dict) else {}
+        links = data.get("links") if isinstance(data, dict) and isinstance(data.get("links"), dict) else {}
+        if meta.get("last_page") is not None and meta.get("current_page") is not None:
+            more = int(meta["current_page"]) < int(meta["last_page"])
+        elif "next" in links:
+            more = bool(links.get("next"))
+        else:
+            more = len(items) >= limit
+        return [self._summary(i) for i in items if isinstance(i, dict)], more
+
+    def _key(self, resource_id: Optional[str], slug: Optional[str]) -> Dict[str, str]:
+        key = {"id": str(resource_id or ""), "slug": str(slug or "")}
+        if not key[self.capability.identity]:
+            raise ContractViolationError(f"'{self.capability.name}' records are addressed by "
+                                         f"{self.capability.identity}; none was given")
+        return key
+
+    def retrieve_record(self, *, resource_id: Optional[str], slug: Optional[str]) -> Optional[Dict[str, Any]]:
+        status, data = self._call("retrieve", self._key(resource_id, slug),
+                                  query={"context": "edit"} if self.capability.adapter == "wordpress" else None)
+        if status in (404, 410):
+            return None
+        if status != 200:
+            raise ContentStoreError(f"The backend answered HTTP {status} to a read of '{self.capability.name}'")
+        return _unwrap(data)
+
+    def update_record(self, *, resource_id: Optional[str], slug: Optional[str], changes: Dict[str, Any],
+                      expected: Dict[str, Any], idempotency_key: str) -> Dict[str, Any]:
+        """Change only *changes* on an existing record, if it still holds
+        *expected* (no concurrent edit is overwritten). Returns the previous
+        and current values of the changed fields."""
+        from tekjuice_connector.publication.errors import RecordChangedError
+        from tekjuice_connector.publication.schema_mapping import _coerce
+
+        with self._db() as db:
+            db.execute("""CREATE TABLE IF NOT EXISTS tekjuice_record_changes (
+                idempotency_key TEXT PRIMARY KEY, content_type TEXT NOT NULL, result TEXT NOT NULL,
+                created_at TEXT NOT NULL)""")
+            done = db.execute("SELECT result FROM tekjuice_record_changes WHERE idempotency_key = ?",
+                              (idempotency_key,)).fetchone()
+        if done is not None:
+            return {**json.loads(done["result"]), "replayed": True}
+        record = self.retrieve_record(resource_id=resource_id, slug=slug)
+        if record is None:
+            raise TargetNotFoundError(f"The backend has no such '{self.capability.name}'")
+        current = self._values(record)
+        changed = [k for k, v in expected.items() if _same(current.get(k), v) is False]
+        if changed:
+            raise RecordChangedError(f"The '{self.capability.name}' changed since it was assessed "
+                                     f"({', '.join(sorted(changed))}); nothing was written", fields=changed)
+        by_name = {spec.name: spec for spec in self.capability.fields}
+        fitted: Dict[str, Any] = {}
+        problems = []
+        for name, value in changes.items():
+            spec = by_name.get(name)
+            if spec is None or spec.read_only:
+                problems.append(f"'{name}' is not a writable field of '{self.capability.name}'")
+                continue
+            value, error = _coerce(spec, value, "fields")
+            if error:
+                problems.append(error)
+            else:
+                fitted[name] = value
+        if problems or not fitted:
+            raise ContentMappingError(f"The changes do not fit '{self.capability.name}': "
+                                      + ("; ".join(problems) or "no changes"),
+                                      report={"ok": False, "errors": problems})
+        if "patch" in self.capability.operations:
+            operation, body = "patch", fitted
+        elif self.capability.adapter == "wordpress" or self.capability.operations["update"].method == "PATCH":
+            operation, body = "update", fitted       # partial updates accepted
+        else:                                        # PUT: the whole writable record with the changes
+            operation = "update"
+            body = {spec.name: current[spec.name] for spec in self.capability.fields
+                    if not spec.read_only and spec.name in current and current[spec.name] is not None}
+            body.update(fitted)
+        key = self._key(resource_id, slug)
+        status, data = self._call(operation, key, body, idempotency_key)
+        if status in (404, 410):
+            raise TargetNotFoundError(f"The backend no longer has this '{self.capability.name}'")
+        if status not in (200, 201, 202, 204):
+            raise _rejection(self.capability.name, status, data)
+        after = self._values(_unwrap(data)) if status != 204 and isinstance(data, dict) else {}
+        result = {"status": "applied", "content_type": self.capability.name,
+                  "resource_id": str(resource_id or _unwrap(data).get("id") or ""), "slug": slug,
+                  "url": self._summary(_unwrap(data) if isinstance(data, dict) else record)["url"],
+                  "previous": {k: current.get(k) for k in fitted},
+                  "current": {k: after.get(k, fitted[k]) for k in fitted}, "replayed": False}
+        with self._lock, self._db() as db:
+            db.execute("INSERT OR REPLACE INTO tekjuice_record_changes VALUES (?, ?, ?, ?)",
+                       (idempotency_key, self.capability.name, json.dumps(result),
+                        datetime.now(timezone.utc).isoformat()))
+        return result
+
     def __repr__(self) -> str:
         return f"RestResourceStore(type={self.capability.name!r}, base_url={self._base!r})"
+
+
+def _same(a: Any, b: Any) -> Optional[bool]:
+    """Whether two record values are equal (numbers and text normalised)."""
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)) and not isinstance(a, bool):
+        return float(a) == float(b)
+    if isinstance(a, str) and isinstance(b, str):
+        return a.strip() == b.strip()
+    return a == b
 
 
 def _rejection(name: str, status: int, data: Any) -> PublicationError:
@@ -438,6 +592,9 @@ def capabilities_from_openapi(document: Dict[str, Any], *, adapter: str = "opena
                                       ("delete", "delete")):
                 if isinstance(other_item.get(method), dict) and operation not in operations:
                     operations[operation] = Endpoint(method.upper(), safe_path(canonical))
+            if isinstance(other_item.get("patch"), dict) and operations.get("update") is not None \
+                    and operations["update"].method != "PATCH":
+                operations["patch"] = Endpoint("PATCH", safe_path(canonical))
         for other, other_item in paths.items():   # extra actions: /posts/{id}/publish, /issues/{id}/send
             match = re.fullmatch(re.escape(path.rstrip("/")) + r"/\{[^}]+\}/([a-z_-]+)", other)
             if match and isinstance(other_item, dict) and isinstance(other_item.get("post"), dict):
@@ -532,6 +689,7 @@ def wordpress_source(site_url: str, *, username: str, application_password: str,
                 name=normalise_name(slug), label=str(info.get("name") or slug), adapter="wordpress",
                 fields=_wordpress_fields(schema) if isinstance(schema, dict) else [],
                 operations={"create": Endpoint("POST", safe_path(collection)),
+                            "list": Endpoint("GET", safe_path(collection)),
                             "update": Endpoint("POST", safe_path(collection + "/{id}")),
                             "retrieve": Endpoint("GET", safe_path(collection + "/{id}")),
                             "delete": Endpoint("DELETE", safe_path(collection + "/{id}"))},

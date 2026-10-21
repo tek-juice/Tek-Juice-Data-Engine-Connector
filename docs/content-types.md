@@ -179,6 +179,55 @@ The response carries the mapping report (`mapped`, `unmapped_sources`,
 `missing_required`, `ambiguous`, `errors`). Values with no destination are
 listed in `unmapped_sources`.
 
+## Existing records: reading and improving the backend's own content (0.11.0+)
+
+Publishing creates new records. To make the whole website visible, the Data
+Engine also improves what is already there: the products, events, posts and
+listings the owner created. Receivers advertising `content.records` offer two
+more actions for content types whose backend **lists** records, **returns**
+one and **updates** one (`list`, `retrieve` and `update`/`patch` operations;
+`records: true` in the capability map):
+
+`content_inventory` (read-only) returns one page of a type's records:
+
+```json
+{"contract_version": "1.0", "action": "content_inventory", "website_id": "...",
+ "content_type": "product", "page": 1, "limit": 50}
+```
+
+Each item has `resource_id`, `slug`, `url`, `updated_at` and `values` (the
+type's schema fields; WordPress `{raw, rendered}` objects as their raw
+text). Paging follows the backend: Laravel paginators (`meta.current_page`,
+`meta.last_page`), `links.next`, plain lists, `?page=` and `?per_page=`
+(override with `workflow.pagination` in the manifest).
+
+`record_update` changes named fields of one existing record:
+
+```json
+{"contract_version": "1.0", "action": "record_update", "website_id": "...",
+ "idempotency_key": "...", "content_type": "product", "resource_id": "12", "slug": "blue-mug",
+ "changes": {"seo_description": "A stoneware mug, 350 ml, made in Kampala."},
+ "expected": {"seo_description": null}}
+```
+
+- The connector reads the record first. If any `expected` value differs, the
+  record was edited since it was assessed: **nothing is written**
+  (`record_changed`, HTTP 409).
+- Changes are checked against the schema (writable fields only, types,
+  lengths, enums, ranges).
+- With a `PATCH` operation only the changed fields are sent; with `PUT` the
+  record's writable fields are sent with the changes applied, so nothing is
+  lost.
+- The response has `previous` and `current` values: sending `previous` back
+  undoes the change. A repeated idempotency key replays the result.
+
+The Data Engine reads every record on its first assessment and daily, checks
+each against its kind (title, search description, summary, enough
+description, duplicate titles, its page's crawl findings), drafts
+improvements from the record and the confirmed business facts only (no new
+numbers, nothing shorter than before), and proposes each for the owner's
+approval with a before/after view.
+
 ## Responses
 
 A typed publication's response adds:
@@ -198,6 +247,7 @@ New error codes (HTTP 422, not retried):
 |---|---|---|
 | `content_type_unavailable` | unknown type, a type that is not ready, or an operation it does not offer; `reasons` says what is missing | enable the type (manifest, `x-tekjuice-content-type`, `TEKJUICE_CONTENT_TYPES`) or fix the limitation |
 | `content_mapping_failed` | the content does not fit the schema; `mapping` is the report | send the missing fields, add `field_map`, or fix the schema |
+| `record_changed` (409) | the record was edited since it was assessed; nothing written | the Data Engine reads it again and re-assesses |
 
 ## Idempotency, isolation and security
 
@@ -248,7 +298,8 @@ changing the connector.
 
 ## Limitations
 
-- Tek Juice performs `create` and `update` only. Unpublishing, deleting,
+- Tek Juice creates records, updates its own, and (with the owner's
+  approval) improves fields of existing ones. Unpublishing, deleting,
   sending, scheduling and inventory changes are reported, never executed.
 - GraphQL APIs are not discovered (no source yet). OpenAPI 2 (Swagger) is
   not read: convert it to OpenAPI 3.

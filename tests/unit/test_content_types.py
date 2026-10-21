@@ -56,6 +56,8 @@ class FakeBackend:
                 "Authorization", "").startswith("Basic "):
             return 401, {"message": "Unauthenticated."}
         path = url[len(BASE):] if url.startswith(BASE) else url.split("/wp-json", 1)[-1]
+        path, _, query = path.partition("?")
+        params = dict(p.split("=", 1) for p in query.split("&") if "=" in p)
         if path == "/capabilities":
             return (200, self.manifest) if self.manifest is not None else (404, None)
         if path == "/openapi.json":
@@ -83,6 +85,11 @@ class FakeBackend:
                 return 404, {"message": "Not found"}
             target.update(body or {})
             return 200, {"data": target} if self.wrap else target
+        if method == "GET" and len(parts) == 1:
+            page, per_page = int(params.get("page", 1)), int(params.get("per_page", 50))
+            items = list(records.values())[(page - 1) * per_page: page * per_page]
+            last = max(1, -(-len(records) // per_page))
+            return 200, {"data": items, "meta": {"current_page": page, "last_page": last}}
         if method == "GET" and len(parts) == 2:
             target = records.get(parts[1]) or next((r for r in records.values() if r.get("slug") == parts[1]), None)
             return (200, target) if target else (404, None)
@@ -486,3 +493,123 @@ def test_diagnostic_report_shows_status_and_gaps_without_secrets(tmp_path):
     assert "event (Events) — READY" in text and "faq (Events) — UNSUPPORTED" in text
     assert "! the backend did not describe this type's fields" in text
     assert "Tek Juice performs: create, update" in text and TOKEN not in text and "backend:3000" not in text
+
+
+
+# ── Existing records: inventory and improvement ─────────────────────────────
+
+PRODUCTS = {"name": "product", "label": "Products", "identity": "slug", "schema": {
+    "type": "object", "required": ["name", "slug", "price"], "properties": {
+        "name": {"type": "string"}, "slug": {"type": "string"}, "price": {"type": "number", "minimum": 0},
+        "description": {"type": "string", "format": "html"}, "seo_description": {"type": "string", "maxLength": 160},
+        "id": {"type": "integer", "readOnly": True}}},
+    "public_url_template": "https://www.customer.example/shop/{slug}",
+    "operations": {"create": {"path": "/products"}, "list": {"method": "GET", "path": "/products"},
+                   "retrieve": {"method": "GET", "path": "/products/{slug}"},
+                   "update": {"method": "PATCH", "path": "/products/{slug}"}}}
+
+
+def _shop(tmp_path, count=3):
+    backend = FakeBackend(manifest=manifest(PRODUCTS, EVENTS))
+    backend.records["products"] = {str(i): {"id": i, "name": f"Mug {i}", "slug": f"mug-{i}", "price": 9.5,
+                                            "description": "<p>A mug.</p>", "seo_description": None}
+                                   for i in range(1, count + 1)}
+    return backend, _receiver(registry(backend, tmp_path))
+
+
+def _inventory(receiver, content_type, page=1, limit=2):
+    return send(receiver, {"contract_version": "1.0", "action": "content_inventory", "website_id": WEBSITE_ID,
+                           "content_type": content_type, "page": page, "limit": limit})
+
+
+def _record_update(receiver, changes, expected, key="change-key-1", slug="mug-1"):
+    return send(receiver, {"contract_version": "1.0", "action": "record_update", "website_id": WEBSITE_ID,
+                           "idempotency_key": key, "content_type": "product", "slug": slug,
+                           "changes": changes, "expected": expected})
+
+
+def test_existing_records_are_listed_page_by_page(tmp_path):
+    _, receiver = _shop(tmp_path)
+    assert "content.records" in receiver.capabilities
+    first = _inventory(receiver, "product")
+    assert first.status_code == 200 and first.body["more"] is True
+    assert [i["slug"] for i in first.body["items"]] == ["mug-1", "mug-2"]
+    item = first.body["items"][0]
+    assert item["url"] == "https://www.customer.example/shop/mug-1" and item["values"]["name"] == "Mug 1"
+    assert "id" in item["values"] and item["resource_id"] == "1"
+    second = _inventory(receiver, "product", page=2)
+    assert [i["slug"] for i in second.body["items"]] == ["mug-3"] and second.body["more"] is False
+    described = send(receiver, {"contract_version": "1.0", "action": "capabilities", "website_id": WEBSITE_ID})
+    records = {t["name"]: t["records"] for t in described.body["content_types"]["types"]}
+    assert records == {"article": False, "event": False, "product": True}   # events: no list/read
+
+
+def test_a_record_is_improved_only_where_asked_and_reversibly(tmp_path):
+    backend, receiver = _shop(tmp_path)
+    better = {"description": "<p>A 350 ml stoneware mug.</p>", "seo_description": "Stoneware mug, 350 ml."}
+    done = _record_update(receiver, better, {"description": "<p>A mug.</p>", "seo_description": None})
+    assert done.status_code == 200, done.body
+    assert done.body["previous"] == {"description": "<p>A mug.</p>", "seo_description": None}
+    assert done.body["current"] == better
+    sent = backend.calls[-1]
+    assert sent[0] == "PATCH" and sent[3] == better                       # only the changed fields
+    assert backend.records["products"]["1"]["name"] == "Mug 1"            # the rest untouched
+    calls = len(backend.calls)
+    assert _record_update(receiver, better, {"description": "<p>A mug.</p>"}).body["replayed"] is True
+    assert len(backend.calls) == calls
+    undo = _record_update(receiver, done.body["previous"], better, key="change-key-undo")
+    assert undo.status_code == 200 and backend.records["products"]["1"]["description"] == "<p>A mug.</p>"
+
+
+def test_a_concurrent_edit_is_never_overwritten(tmp_path):
+    backend, receiver = _shop(tmp_path)
+    backend.records["products"]["1"]["description"] = "<p>Edited by the owner meanwhile.</p>"
+    response = _record_update(receiver, {"description": "<p>Ours.</p>"}, {"description": "<p>A mug.</p>"})
+    assert response.status_code == 409 and response.body["error"]["code"] == "record_changed"
+    assert response.body["error"]["fields"] == ["description"]
+    assert backend.records["products"]["1"]["description"] == "<p>Edited by the owner meanwhile.</p>"
+    assert not any(c[0] == "PATCH" for c in backend.calls)
+
+
+@pytest.mark.parametrize("changes,code", [
+    ({"id": 7}, "content_mapping_failed"),                       # read-only
+    ({"seo_description": "x" * 200}, "content_mapping_failed"),  # too long
+    ({"price": -1}, "content_mapping_failed"),                   # below minimum
+    ({"colour": "blue"}, "content_mapping_failed"),              # not a field
+])
+def test_record_changes_must_fit_the_schema(tmp_path, changes, code):
+    backend, receiver = _shop(tmp_path)
+    response = _record_update(receiver, changes, {})
+    assert response.status_code == 422 and response.body["error"]["code"] == code
+    assert not any(c[0] == "PATCH" for c in backend.calls)
+
+
+def test_records_need_list_read_and_update(tmp_path):
+    _, receiver = _shop(tmp_path)
+    assert _inventory(receiver, "event").body["error"]["code"] == "content_type_unavailable"
+    assert _inventory(receiver, "nonexistent").body["error"]["code"] == "content_type_unavailable"
+    bare = PublicationReceiver(store=InMemoryContentStore("https://www.customer.example"), website_id=WEBSITE_ID,
+                               receiver_secret=RECEIVER_SECRET)
+    assert "content.records" not in bare.capabilities
+    assert _inventory(bare, "product").body["error"]["code"] == "content_type_unavailable"
+
+
+def test_put_backends_receive_the_whole_record_with_the_change(tmp_path):
+    from tekjuice_connector.publication.content_sources import capabilities_from_openapi, RestResourceStore
+
+    doc = {"openapi": "3.0.0", "paths": {
+        "/posts": {"get": {}, "post": {"x-tekjuice-content-type": True, "requestBody": {"content": {"application/json": {
+            "schema": {"type": "object", "required": ["title", "slug", "body"], "properties": {
+                "title": {"type": "string"}, "slug": {"type": "string"}, "body": {"type": "string"},
+                "id": {"type": "integer", "readOnly": True}}}}}}}},
+        "/posts/{post}": {"get": {}, "put": {}}}}
+    [capability] = capabilities_from_openapi(doc)
+    backend = FakeBackend()
+    backend.records["posts"] = {"5": {"id": 5, "title": "Old", "slug": "old", "body": "<p>Body.</p>"}}
+    store = RestResourceStore(capability, base_url=BASE, ledger_path=str(tmp_path / "l.db"),
+                              auth_header=f"Bearer {TOKEN}", request=backend)
+    store.update_record(resource_id="5", slug=None, changes={"title": "Better title"}, expected={"title": "Old"},
+                        idempotency_key="put-key-1")
+    method, url, _, body = backend.calls[-1]
+    assert method == "PUT" and url.endswith("/posts/5")
+    assert body == {"title": "Better title", "slug": "old", "body": "<p>Body.</p>"}    # id (read-only) left out

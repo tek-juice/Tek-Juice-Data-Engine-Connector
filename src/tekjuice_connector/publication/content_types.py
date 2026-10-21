@@ -326,10 +326,32 @@ class ContentTypeRegistry:
                                    content_type=name, reasons=[f"available: {sorted(capability.operations)}"])
         return capability, store
 
+    def records(self, name: str) -> Tuple[ContentTypeCapability, Any]:
+        """(capability, store) for reading and improving a type's existing
+        records (content inventory, record updates)."""
+        self._ensure()
+        entry = self._types.get(name)
+        if entry is None:
+            raise ContentTypeError(f"Unknown content type '{name}'", content_type=name)
+        capability, store = entry
+        if capability.status != READY:
+            raise ContentTypeError(f"Content type '{name}' is {capability.status}, not ready",
+                                   content_type=name, reasons=capability.limitations)
+        supports = getattr(store, "supports_records", None)
+        if not callable(supports) or not supports():
+            raise ContentTypeError(f"Content type '{name}' has no list, read and update of existing records",
+                                   content_type=name, reasons=[f"available: {sorted(capability.operations)}"])
+        return capability, store
+
     def describe(self) -> Dict[str, Any]:
         """The capability map for the ``capabilities`` action and diagnostics."""
         self._ensure()
-        types = [entry[0].to_dict() for _, entry in sorted(self._types.items())]
+        types = []
+        for _, (capability, store) in sorted(self._types.items()):
+            item = capability.to_dict()
+            supports = getattr(store, "supports_records", None)
+            item["records"] = bool(capability.status == READY and callable(supports) and supports())
+            types.append(item)
         return {"default": self._default if self._default in self._types else None,
                 "types": types, "ready": [t["name"] for t in types if t["status"] == READY],
                 "errors": list(self._errors), "ttl_seconds": self._ttl}

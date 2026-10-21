@@ -9,6 +9,18 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-10-21
+
+### Added
+- Existing records (`content.records`): `content_inventory` lists a content
+  type's records page by page (read-only); `record_update` changes named
+  fields of one record only if it still holds the values it was assessed
+  with (`record_changed`, 409, otherwise), checks the changes against the
+  schema, sends only the changes (PATCH) or the whole writable record (PUT),
+  and returns the previous values for rollback. WordPress types gain a list
+  operation; OpenAPI types record PATCH beside PUT.
+- `records` in the capability map says which types support this.
+
 ## [0.10.1] — 2026-10-21
 
 ### Added

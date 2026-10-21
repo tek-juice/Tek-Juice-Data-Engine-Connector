@@ -143,6 +143,23 @@ class ContentMappingError(ContractViolationError):
         return body
 
 
+class RecordChangedError(PublicationError):
+    """The record changed on the backend since it was assessed: the update
+    would overwrite someone's edit, so nothing was written (assess again)."""
+
+    status_code = 409
+    code = "record_changed"
+
+    def __init__(self, message: str, *, fields=()) -> None:
+        super().__init__(message)
+        self.fields = list(fields)
+
+    def to_response_body(self) -> Dict[str, Any]:
+        body = super().to_response_body()
+        body["error"]["fields"] = self.fields
+        return body
+
+
 class ContentStoreError(PublicationError):
     """The customer's content store failed transiently (safe to retry)."""
 

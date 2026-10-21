@@ -80,6 +80,7 @@ fetches this URL and requires the title there before reporting `verified`.
 | `publish.create` | accepts `action: create` | always (store implements `create`) |
 | `publish.update` | accepts `action: update` | store implements `update` |
 | `publish.verify` | accepts `action: verify` dry runs | always |
+| `content.records` | accepts `content_inventory` and `record_update` for content types offering records ([content types](content-types.md)) | a content type registry is configured (0.11.0+) |
 | `publish.content_types` | accepts `content.content_type` and `content.fields`, and reports its content types in the `capabilities` action ([content types](content-types.md)) | a content type registry is configured (0.10.0+) |
 
 The Data Engine requires `publish.create` and `publish.verify`, and contract
